@@ -30,6 +30,56 @@ fn task_intent_identity_types_are_runtime_owned() {
 }
 
 #[test]
+fn task_effects_are_abstract_runtime_intents() {
+    let effect = AppEffect::start_task(
+        TaskIntentName::new("search"),
+        TaskIntentKey::new("search:rust"),
+        AppScope::app(),
+    );
+
+    let AppEffectPayload::StartTask(intent) = effect.payload() else {
+        panic!("expected start task intent");
+    };
+
+    assert_eq!(intent.name().as_str(), "search");
+    assert_eq!(intent.key().as_str(), "search:rust");
+    assert!(intent.scope().is_app());
+}
+
+#[test]
+fn cancel_task_effect_carries_runtime_task_intent_handle() {
+    let handle = TaskIntentHandle::new(TaskIntentId::from_u64(7), TaskIntentAttemptId::from_u64(2));
+    let effect = AppEffect::cancel_task(handle);
+
+    let AppEffectPayload::CancelTask(intent) = effect.payload() else {
+        panic!("expected cancel task intent");
+    };
+
+    assert_eq!(intent.handle(), handle);
+}
+
+#[test]
+fn reprioritize_task_effect_carries_runtime_task_intent_handle_and_priority_hint() {
+    let handle = TaskIntentHandle::new(TaskIntentId::from_u64(7), TaskIntentAttemptId::from_u64(2));
+    let effect = AppEffect::reprioritize_task(handle, TaskPriorityHint::High);
+
+    let AppEffectPayload::ReprioritizeTask(intent) = effect.payload() else {
+        panic!("expected reprioritize task intent");
+    };
+
+    assert_eq!(intent.handle(), handle);
+    assert_eq!(intent.priority(), TaskPriorityHint::High);
+}
+
+#[test]
+fn task_descriptor_names_abstract_runtime_intents() {
+    let descriptor = TaskDescriptor::new(TaskIntentName::new("search"), "SearchInput");
+
+    assert_eq!(descriptor.name().as_str(), "search");
+    assert_eq!(descriptor.input_type(), "SearchInput");
+}
+
+#[test]
 fn provenance_carries_causal_fields() {
     let parent = CorrelationId::from_u64(1);
     let child = InputProvenance::task(TaskId::from_u64(2), TaskAttemptId::from_u64(3))

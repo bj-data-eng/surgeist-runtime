@@ -72,7 +72,7 @@ impl<Input> SpawnRequest<Input> {
         Self {
             task_id,
             attempt_id,
-            key: effect.key().clone(),
+            key: TaskKey::new(effect.key().as_str()),
             scope: effect.scope().clone(),
             blocking: BlockingPolicy::Abortable,
             input: None,

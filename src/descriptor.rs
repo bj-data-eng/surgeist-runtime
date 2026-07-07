@@ -1,6 +1,6 @@
 use super::{
     AppId, AppScope, CommandDescriptor, EventDescriptor, ResourceId, RootId, SnapshotBinding,
-    TaskName,
+    TaskIntentName,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -168,18 +168,18 @@ impl RootDescriptor {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskDescriptor {
-    name: TaskName,
+    name: TaskIntentName,
     input_type: &'static str,
 }
 
 impl TaskDescriptor {
     #[must_use]
-    pub const fn new(name: TaskName, input_type: &'static str) -> Self {
+    pub const fn new(name: TaskIntentName, input_type: &'static str) -> Self {
         Self { name, input_type }
     }
 
     #[must_use]
-    pub fn name(&self) -> &TaskName {
+    pub fn name(&self) -> &TaskIntentName {
         &self.name
     }
 

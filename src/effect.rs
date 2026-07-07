@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use super::{
     AppScope, CorrelationId, Diagnostic, ResourceId, ServiceCommandName, ServiceCommandPayload,
-    ServiceId, SurfaceId, TaskHandle, TaskKey, TaskName, TaskPriority,
+    ServiceId, SurfaceId, TaskIntentHandle, TaskIntentKey, TaskIntentName, TaskPriorityHint,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,21 +121,21 @@ impl AppEffect {
     }
 
     #[must_use]
-    pub fn start_task(name: TaskName, key: TaskKey, scope: AppScope) -> Self {
+    pub fn start_task(name: TaskIntentName, key: TaskIntentKey, scope: AppScope) -> Self {
         Self {
             payload: AppEffectPayload::StartTask(StartTaskEffect { name, key, scope }),
         }
     }
 
     #[must_use]
-    pub fn cancel_task(handle: TaskHandle) -> Self {
+    pub fn cancel_task(handle: TaskIntentHandle) -> Self {
         Self {
             payload: AppEffectPayload::CancelTask(CancelTaskEffect { handle }),
         }
     }
 
     #[must_use]
-    pub fn reprioritize_task(handle: TaskHandle, priority: TaskPriority) -> Self {
+    pub fn reprioritize_task(handle: TaskIntentHandle, priority: TaskPriorityHint) -> Self {
         Self {
             payload: AppEffectPayload::ReprioritizeTask(ReprioritizeTaskEffect {
                 handle,
@@ -305,19 +305,19 @@ impl InvalidateResourceEffect {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StartTaskEffect {
-    name: TaskName,
-    key: TaskKey,
+    name: TaskIntentName,
+    key: TaskIntentKey,
     scope: AppScope,
 }
 
 impl StartTaskEffect {
     #[must_use]
-    pub fn name(&self) -> &TaskName {
+    pub fn name(&self) -> &TaskIntentName {
         &self.name
     }
 
     #[must_use]
-    pub fn key(&self) -> &TaskKey {
+    pub fn key(&self) -> &TaskIntentKey {
         &self.key
     }
 
@@ -329,30 +329,30 @@ impl StartTaskEffect {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelTaskEffect {
-    handle: TaskHandle,
+    handle: TaskIntentHandle,
 }
 
 impl CancelTaskEffect {
     #[must_use]
-    pub const fn handle(&self) -> TaskHandle {
+    pub const fn handle(&self) -> TaskIntentHandle {
         self.handle
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReprioritizeTaskEffect {
-    handle: TaskHandle,
-    priority: TaskPriority,
+    handle: TaskIntentHandle,
+    priority: TaskPriorityHint,
 }
 
 impl ReprioritizeTaskEffect {
     #[must_use]
-    pub const fn handle(&self) -> TaskHandle {
+    pub const fn handle(&self) -> TaskIntentHandle {
         self.handle
     }
 
     #[must_use]
-    pub const fn priority(&self) -> TaskPriority {
+    pub const fn priority(&self) -> TaskPriorityHint {
         self.priority
     }
 }

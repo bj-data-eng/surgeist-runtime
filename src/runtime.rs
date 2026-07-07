@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, VecDeque};
 use super::{
     AppEffect, AppEffectPayload, AppInput, BlockingPolicy, Diagnostic, DiagnosticCode,
     DiagnosticLog, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer, RuntimeExecutor,
-    SpawnRequest, StateVersion, SurfaceId, TaskHandle, TaskId, TaskRecord, UiSurface,
+    SpawnRequest, StateVersion, SurfaceId, TaskAttemptId, TaskHandle, TaskId, TaskIntentHandle,
+    TaskRecord, UiSurface,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -482,7 +483,10 @@ where
                 report.executed_effects += 1;
                 self.diagnostics.push(
                     effect_failed("task reprioritization is not available")
-                        .with_task(effect.handle().task_id(), effect.handle().attempt_id())
+                        .with_task(
+                            TaskId::from_u64(effect.handle().id().as_u64()),
+                            TaskAttemptId::from_u64(effect.handle().attempt_id().as_u64()),
+                        )
                         .with_effect("runtime.reprioritize_task"),
                 );
             }
@@ -545,7 +549,12 @@ where
         }
     }
 
-    fn cancel_task(&mut self, handle: TaskHandle) {
+    fn cancel_task(&mut self, handle: TaskIntentHandle) {
+        let handle = TaskHandle::new(
+            TaskId::from_u64(handle.id().as_u64()),
+            TaskAttemptId::from_u64(handle.attempt_id().as_u64()),
+        );
+
         let Some(executor) = &mut self.executor else {
             self.diagnostics.push(
                 effect_failed("runtime executor is not available")
