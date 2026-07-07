@@ -15,8 +15,6 @@ path = "src/lib.rs"
 surgeist-retained = { path = "../surgeist-retained", version = "=0.1.0" }
 surgeist-task = { path = "../surgeist-task", version = "=0.1.0" }
 surgeist-window = { path = "../surgeist-window", version = "=0.1.0" }
-tokio = { version = "=1.48.0", optional = true, features = ["rt-multi-thread", "sync", "time"] }
 
 [features]
 default = []
-runtime-tokio = ["dep:tokio"]

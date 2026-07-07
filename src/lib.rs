@@ -20,8 +20,6 @@ mod proxy;
 mod reducer;
 mod resource;
 mod runtime;
-#[cfg(feature = "runtime-tokio")]
-mod runtime_tokio;
 mod service;
 mod snapshot;
 mod surface;
@@ -91,12 +89,6 @@ pub use task::{
     TaskStatus, UnobservedPolicy,
 };
 pub use testing::{FakeClock, FakeWakeBridge, FakeWindowBridge, HeadlessApp, HeadlessHarness};
-
-#[cfg(feature = "runtime-tokio")]
-const _: fn() -> runtime_tokio::TokioExecutor = runtime_tokio::TokioExecutor::new;
-
-#[cfg(feature = "runtime-tokio")]
-const _: fn(&runtime_tokio::TokioExecutor) -> &'static str = runtime_tokio::TokioExecutor::name;
 
 /// Returns the crate identity while the runtime API is being designed.
 #[must_use]
