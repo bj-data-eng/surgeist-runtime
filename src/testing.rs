@@ -1,17 +1,17 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use super::Freshness;
 use super::{
-    AppEffect, AppInput, AppProxy, AppProxyError, AppProxyErrorCode, AppScope, CorrelationId,
-    DiagnosticLog, InputProvenance, ProxyInput, QueuePolicy, RedrawTarget, Reducer, ReducerResult,
-    ResourceId, ResourceState, ResourceStateReadyTransition, ResourceStatus, RootId, Runtime,
-    RuntimeBudget, RuntimeDrainReport, RuntimeInputError, ServiceId, ServiceInput, ServiceStatus,
-    SurfaceId, TaskAttemptId, TaskHandle, TaskId, TaskInput, TaskKey, TaskPolicy, TaskRecord,
-    TaskStatus, UiInput, UiSurface, WakeBridge, WindowRoot,
+    AppEffect, AppInput, AppProxy, AppProxyError, AppProxyErrorCode, CorrelationId, DiagnosticLog,
+    InputProvenance, ProxyInput, QueuePolicy, RedrawTarget, Reducer, ReducerResult, ResourceId,
+    ResourceState, ResourceStateReadyTransition, ResourceStatus, RootId, Runtime, RuntimeBudget,
+    RuntimeDrainReport, RuntimeInputError, ServiceId, ServiceInput, ServiceStatus, SurfaceId,
+    TaskInput, TaskIntentAttemptId, TaskIntentHandle, TaskIntentId, UiInput, UiSurface, WakeBridge,
+    WindowRoot,
 };
 use surgeist_window as window;
 
@@ -362,7 +362,7 @@ pub struct ThumbnailImportExample {
     harness: HeadlessHarness<ThumbnailImportState, ThumbnailImportReducer, ThumbnailImportInput>,
     proxy: AppProxy<ThumbnailImportInput>,
     wake: FakeWakeBridge,
-    import_handle: TaskHandle,
+    import_handle: TaskIntentHandle,
     gallery_surface: SurfaceId,
     remaining_task_inputs: usize,
 }
@@ -373,7 +373,8 @@ impl ThumbnailImportExample {
         let gallery_surface = SurfaceId::from_u64(1);
         let wake = FakeWakeBridge::default();
         let proxy = AppProxy::new(wake.clone(), QueuePolicy::bounded(128));
-        let import_handle = TaskHandle::new(THUMBNAIL_IMPORT_TASK_ID, TaskAttemptId::from_u64(1));
+        let import_handle =
+            TaskIntentHandle::new(THUMBNAIL_IMPORT_TASK_ID, TaskIntentAttemptId::from_u64(1));
         let mut harness = HeadlessHarness::new(
             ThumbnailImportState::new(gallery_surface),
             ThumbnailImportReducer,
@@ -435,10 +436,7 @@ impl ThumbnailImportExample {
                         index,
                         value: format!("thumbnail-{index}"),
                     },
-                    InputProvenance::task(
-                        self.import_handle.task_id(),
-                        self.import_handle.attempt_id(),
-                    ),
+                    InputProvenance::task(self.import_handle.id(), self.import_handle.attempt_id()),
                 )
                 .expect("thumbnail completion should be a task input"),
             )
@@ -451,11 +449,6 @@ impl ThumbnailImportExample {
 
     pub fn navigate_away(&mut self) {
         self.enqueue_ui(ThumbnailImportInput::NavigateAway);
-    }
-
-    #[must_use]
-    pub fn import_task_status(&self) -> TaskStatus {
-        self.harness.state().import_status
     }
 
     #[must_use]
@@ -500,7 +493,6 @@ struct ThumbnailImportState {
     gallery_surface: SurfaceId,
     folder: Option<String>,
     tiles: Vec<ResourceState<String, String>>,
-    import_status: TaskStatus,
     observing_gallery: bool,
 }
 
@@ -510,7 +502,6 @@ impl ThumbnailImportState {
             gallery_surface,
             folder: None,
             tiles: Vec::new(),
-            import_status: TaskStatus::Queued,
             observing_gallery: false,
         }
     }
@@ -536,7 +527,6 @@ impl Reducer<ThumbnailImportState, ThumbnailImportInput> for ThumbnailImportRedu
         let changed = match input.payload() {
             ThumbnailImportInput::FolderChosen { folder } => {
                 state.folder = Some(folder.clone());
-                state.import_status = TaskStatus::Running;
                 state.observing_gallery = true;
                 state.tiles = initial_thumbnail_tiles(folder);
                 for tile in &mut state.tiles {
@@ -636,36 +626,26 @@ pub enum ServiceRequestStatus {
     TimedOutAfterCancel,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BlockingPolicy {
-    Abortable,
-    Blocking,
-    NonAbortableReportCancelling,
-}
-
 pub struct PrototypeApp {
     budget: RuntimeBudget,
     runtime: Runtime<PrototypeState, PrototypeReducer, PrototypeInput>,
     remaining_task_inputs: usize,
     wake: FakeWakeBridge,
     proxy: AppProxy<PrototypeInput>,
-    compile_task: TaskRecord,
-    compile_observers: BTreeSet<SurfaceId>,
     surfaces: BTreeMap<String, SurfaceId>,
     next_surface_id: u64,
     next_window_id: u64,
     next_request_id: u64,
-    next_import_task_id: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PrototypeInput {
     SearchStarted {
         query: String,
-        attempt: TaskAttemptId,
+        attempt: TaskIntentAttemptId,
     },
     SearchComplete {
-        attempt: TaskAttemptId,
+        attempt: TaskIntentAttemptId,
         results: Vec<String>,
     },
     LogLine(String),
@@ -688,16 +668,6 @@ pub enum PrototypeInput {
     ToolCallStarted {
         request: ServiceRequestId,
     },
-    ImportStarted {
-        handle: TaskHandle,
-        blocking: BlockingPolicy,
-    },
-    ImportCancelRequested {
-        handle: TaskHandle,
-    },
-    ImportFinished {
-        handle: TaskHandle,
-    },
 }
 
 impl PrototypeApp {
@@ -717,11 +687,6 @@ impl PrototypeApp {
     }
 
     #[must_use]
-    pub fn shared_compile_service() -> Self {
-        Self::new(RuntimeBudget::default())
-    }
-
-    #[must_use]
     pub fn jsonrpc_service() -> Self {
         let mut app = Self::new(RuntimeBudget::default());
         app.reconnect();
@@ -729,26 +694,21 @@ impl PrototypeApp {
         app
     }
 
-    #[must_use]
-    pub fn blocking_media_import() -> Self {
-        Self::new(RuntimeBudget::default())
-    }
-
-    pub fn start_search(&mut self, query: &str, attempt: TaskAttemptId) {
+    pub fn start_search(&mut self, query: &str, attempt: TaskIntentAttemptId) {
         self.enqueue_ui(PrototypeInput::SearchStarted {
             query: query.to_owned(),
             attempt,
         });
     }
 
-    pub fn complete_search(&mut self, attempt: TaskAttemptId, results: Vec<&str>) {
+    pub fn complete_search(&mut self, attempt: TaskIntentAttemptId, results: Vec<&str>) {
         self.complete_search_with_provenance(attempt, attempt, results);
     }
 
     pub fn complete_search_with_provenance(
         &mut self,
-        provenance_attempt: TaskAttemptId,
-        payload_attempt: TaskAttemptId,
+        provenance_attempt: TaskIntentAttemptId,
+        payload_attempt: TaskIntentAttemptId,
         results: Vec<&str>,
     ) {
         let results = results
@@ -774,7 +734,7 @@ impl PrototypeApp {
             .send_task(
                 TaskInput::new(
                     PrototypeInput::LogLine(line),
-                    InputProvenance::task(LOG_TASK_ID, TaskAttemptId::from_u64(1)),
+                    InputProvenance::task(LOG_TASK_ID, TaskIntentAttemptId::from_u64(1)),
                 )
                 .expect("prototype log line should be a task input"),
             )
@@ -840,7 +800,7 @@ impl PrototypeApp {
     pub fn progress_event(&self, index: usize) -> TaskInput<PrototypeInput> {
         TaskInput::new(
             PrototypeInput::Progress(index),
-            InputProvenance::task(PROGRESS_TASK_ID, TaskAttemptId::from_u64(1)),
+            InputProvenance::task(PROGRESS_TASK_ID, TaskIntentAttemptId::from_u64(1)),
         )
         .expect("prototype progress should be a task input")
     }
@@ -861,22 +821,6 @@ impl PrototypeApp {
         ));
         self.surfaces.insert(name.to_owned(), surface_id);
         surface_id
-    }
-
-    pub fn observe_compile(&mut self, surface: SurfaceId) {
-        self.compile_observers.insert(surface);
-    }
-
-    pub fn close_surface(&mut self, surface: SurfaceId) {
-        let was_observing = self.compile_observers.remove(&surface);
-        if was_observing && self.compile_observers.is_empty() {
-            let _ = self.compile_task.request_cancel();
-        }
-    }
-
-    #[must_use]
-    pub const fn compile_task_status(&self) -> TaskStatus {
-        self.compile_task.status()
     }
 
     pub fn call_tool(&mut self, _name: &str) -> ServiceRequestId {
@@ -954,64 +898,9 @@ impl PrototypeApp {
         }
     }
 
-    pub fn start_import(&mut self, _name: &str) -> TaskHandle {
-        let handle = TaskHandle::new(
-            TaskId::from_u64(self.next_import_task_id),
-            TaskAttemptId::from_u64(1),
-        );
-        self.next_import_task_id += 1;
-        self.enqueue_ui(PrototypeInput::ImportStarted {
-            handle,
-            blocking: BlockingPolicy::NonAbortableReportCancelling,
-        });
-        handle
-    }
-
-    pub fn cancel_import(&mut self, handle: TaskHandle) {
-        self.enqueue_ui(PrototypeInput::ImportCancelRequested { handle });
-    }
-
-    #[must_use]
-    pub fn import_blocking_policy(&self, handle: TaskHandle) -> Option<BlockingPolicy> {
-        self.runtime
-            .state()
-            .imports
-            .get(&handle)
-            .map(|record| record.blocking)
-    }
-
-    pub fn finish_non_abortable_import(&mut self, handle: TaskHandle) {
-        self.proxy
-            .send_task(
-                TaskInput::new(
-                    PrototypeInput::ImportFinished { handle },
-                    InputProvenance::task(handle.task_id(), handle.attempt_id()),
-                )
-                .expect("prototype import completion should be a task input"),
-            )
-            .expect("prototype import completion should enqueue");
-    }
-
-    #[must_use]
-    pub fn import_status(&self, handle: TaskHandle) -> TaskStatus {
-        self.runtime
-            .state()
-            .imports
-            .get(&handle)
-            .map(|record| record.status)
-            .unwrap_or(TaskStatus::Queued)
-    }
-
     fn new(budget: RuntimeBudget) -> Self {
         let wake = FakeWakeBridge::default();
         let proxy = AppProxy::new(wake.clone(), QueuePolicy::bounded(20_000));
-        let compile_task = TaskRecord::running_for_test(
-            COMPILE_TASK_ID,
-            TaskKey::new("prototype:compile"),
-            AppScope::app(),
-            TaskPolicy::cancel_when_unobserved(),
-            TaskAttemptId::from_u64(1),
-        );
 
         Self {
             budget,
@@ -1019,13 +908,10 @@ impl PrototypeApp {
             remaining_task_inputs: 0,
             wake,
             proxy,
-            compile_task,
-            compile_observers: BTreeSet::new(),
             surfaces: BTreeMap::new(),
             next_surface_id: 1,
             next_window_id: 1,
             next_request_id: 1,
-            next_import_task_id: 100,
         }
     }
 
@@ -1063,7 +949,7 @@ impl PrototypeApp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PrototypeState {
     active_search_query: Option<String>,
-    active_search_attempt: Option<TaskAttemptId>,
+    active_search_attempt: Option<TaskIntentAttemptId>,
     search_results: Vec<String>,
     log_lines: Vec<String>,
     progress_count: usize,
@@ -1073,13 +959,6 @@ struct PrototypeState {
     request_status: BTreeMap<ServiceRequestId, ServiceRequestStatus>,
     responses: BTreeMap<ServiceRequestId, String>,
     service_progress: BTreeMap<ServiceRequestId, Vec<String>>,
-    imports: BTreeMap<TaskHandle, ImportRecord>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ImportRecord {
-    status: TaskStatus,
-    blocking: BlockingPolicy,
 }
 
 impl Default for PrototypeState {
@@ -1096,7 +975,6 @@ impl Default for PrototypeState {
             request_status: BTreeMap::new(),
             responses: BTreeMap::new(),
             service_progress: BTreeMap::new(),
-            imports: BTreeMap::new(),
         }
     }
 }
@@ -1174,40 +1052,6 @@ impl Reducer<PrototypeState, PrototypeInput> for PrototypeReducer {
                     .insert(*request, ServiceRequestStatus::Pending);
                 true
             }
-            PrototypeInput::ImportStarted { handle, blocking } => {
-                state.imports.insert(
-                    *handle,
-                    ImportRecord {
-                        status: TaskStatus::Running,
-                        blocking: *blocking,
-                    },
-                );
-                true
-            }
-            PrototypeInput::ImportCancelRequested { handle } => {
-                if let Some(record) = state.imports.get_mut(handle) {
-                    record.status = match record.blocking {
-                        BlockingPolicy::NonAbortableReportCancelling => TaskStatus::Cancelling,
-                        BlockingPolicy::Abortable | BlockingPolicy::Blocking => {
-                            TaskStatus::Cancelled
-                        }
-                    };
-                    true
-                } else {
-                    false
-                }
-            }
-            PrototypeInput::ImportFinished { handle } => {
-                if let Some(record) = state.imports.get_mut(handle) {
-                    record.status = match record.status {
-                        TaskStatus::Cancelling => TaskStatus::FinishedAfterCancel,
-                        _ => TaskStatus::Completed,
-                    };
-                    true
-                } else {
-                    false
-                }
-            }
         };
 
         state.reducing = false;
@@ -1219,11 +1063,10 @@ impl Reducer<PrototypeState, PrototypeInput> for PrototypeReducer {
     }
 }
 
-const SEARCH_TASK_ID: TaskId = TaskId::from_u64(1);
-const LOG_TASK_ID: TaskId = TaskId::from_u64(2);
-const PROGRESS_TASK_ID: TaskId = TaskId::from_u64(3);
-const COMPILE_TASK_ID: TaskId = TaskId::from_u64(4);
-const THUMBNAIL_IMPORT_TASK_ID: TaskId = TaskId::from_u64(5);
+const SEARCH_TASK_ID: TaskIntentId = TaskIntentId::from_u64(1);
+const LOG_TASK_ID: TaskIntentId = TaskIntentId::from_u64(2);
+const PROGRESS_TASK_ID: TaskIntentId = TaskIntentId::from_u64(3);
+const THUMBNAIL_IMPORT_TASK_ID: TaskIntentId = TaskIntentId::from_u64(5);
 
 fn jsonrpc_service_id() -> ServiceId {
     ServiceId::new("jsonrpc")

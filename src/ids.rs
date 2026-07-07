@@ -39,8 +39,6 @@ macro_rules! numeric_id {
 string_id!(AppId);
 string_id!(RootId);
 string_id!(ResourceId);
-string_id!(TaskName);
-string_id!(TaskKey);
 string_id!(ServiceId);
 string_id!(CustomScopeId);
 string_id!(ExpressionId);
@@ -48,8 +46,6 @@ string_id!(CalcId);
 string_id!(ValueExprId);
 
 numeric_id!(SurfaceId);
-numeric_id!(TaskId);
-numeric_id!(TaskAttemptId);
 numeric_id!(CorrelationId);
 
 impl Default for AppId {

@@ -1,4 +1,4 @@
-use super::testing::{BlockingPolicy, PrototypeApp, ServiceRequestStatus};
+use super::testing::{PrototypeApp, ServiceRequestStatus};
 use super::*;
 use std::time::Duration;
 
@@ -6,7 +6,7 @@ use std::time::Duration;
 fn typed_ids_are_stable_and_debuggable() {
     assert_eq!(AppId::new("photo.lab").as_str(), "photo.lab");
     assert_eq!(SurfaceId::from_u64(7).as_u64(), 7);
-    assert_eq!(TaskAttemptId::from_u64(3).as_u64(), 3);
+    assert_eq!(TaskIntentAttemptId::from_u64(3).as_u64(), 3);
     assert_eq!(CorrelationId::from_u64(11).as_u64(), 11);
     assert_eq!(
         format!("{:?}", ResourceId::new("thumbs:42")),
@@ -80,17 +80,36 @@ fn task_descriptor_names_abstract_runtime_intents() {
 }
 
 #[test]
+fn task_input_uses_runtime_intent_provenance() {
+    let provenance =
+        InputProvenance::task(TaskIntentId::from_u64(9), TaskIntentAttemptId::from_u64(4));
+    let input = TaskInput::new(CounterInput::Increment, provenance.clone()).unwrap();
+
+    assert_eq!(
+        input.clone().into_app_input().provenance().task_id(),
+        Some(TaskIntentId::from_u64(9))
+    );
+    assert_eq!(
+        input.into_app_input().provenance().task_attempt_id(),
+        Some(TaskIntentAttemptId::from_u64(4))
+    );
+}
+
+#[test]
 fn provenance_carries_causal_fields() {
     let parent = CorrelationId::from_u64(1);
-    let child = InputProvenance::task(TaskId::from_u64(2), TaskAttemptId::from_u64(3))
+    let child = InputProvenance::task(TaskIntentId::from_u64(2), TaskIntentAttemptId::from_u64(3))
         .with_surface(SurfaceId::from_u64(4))
         .with_correlation(CorrelationId::from_u64(5))
         .with_parent(parent);
 
     assert_eq!(child.source(), &InputSourceId::TASK);
     assert!(matches!(child.origin(), InputOrigin::Task(_)));
-    assert_eq!(child.task_id(), Some(TaskId::from_u64(2)));
-    assert_eq!(child.task_attempt_id(), Some(TaskAttemptId::from_u64(3)));
+    assert_eq!(child.task_id(), Some(TaskIntentId::from_u64(2)));
+    assert_eq!(
+        child.task_attempt_id(),
+        Some(TaskIntentAttemptId::from_u64(3))
+    );
     assert_eq!(child.surface_id(), Some(SurfaceId::from_u64(4)));
     assert_eq!(child.correlation_id(), CorrelationId::from_u64(5));
     assert_eq!(child.parent_correlation_id(), Some(parent));
@@ -106,9 +125,9 @@ fn diagnostics_keep_recent_entries_and_counters() {
     ));
     log.push(
         Diagnostic::error(
-            DiagnosticCode::STALE_TASK_EVENT,
-            "attempt mismatch",
-            InputProvenance::task(TaskId::from_u64(2), TaskAttemptId::from_u64(1)),
+            DiagnosticCode::REDUCER_ERROR,
+            "reducer rejected input",
+            InputProvenance::task(TaskIntentId::from_u64(2), TaskIntentAttemptId::from_u64(1)),
         )
         .with_app(AppId::new("photo.lab"))
         .with_window(surgeist_window::Id::from_u64(9))
@@ -129,7 +148,7 @@ fn diagnostics_keep_recent_entries_and_counters() {
     assert_eq!(log.dropped_oldest(), 1);
     assert_eq!(log.count(&DiagnosticCode::UNKNOWN_RETAINED_COMMAND), 1);
     assert_eq!(log.count(&DiagnosticCode::QUEUE_COALESCED), 1);
-    assert_eq!(entries[0].code(), &DiagnosticCode::STALE_TASK_EVENT);
+    assert_eq!(entries[0].code(), &DiagnosticCode::REDUCER_ERROR);
     assert_eq!(entries[0].app_id(), Some(&AppId::new("photo.lab")));
     assert_eq!(
         entries[0].window_id(),
@@ -307,7 +326,7 @@ fn app_proxy_coalesces_wakeups_while_queue_is_non_empty() {
         .send_task(
             TaskInput::new(
                 CounterInput::Increment,
-                InputProvenance::task(TaskId::from_u64(1), TaskAttemptId::from_u64(1)),
+                InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
             )
             .unwrap(),
         )
@@ -316,7 +335,7 @@ fn app_proxy_coalesces_wakeups_while_queue_is_non_empty() {
         .send_task(
             TaskInput::new(
                 CounterInput::Increment,
-                InputProvenance::task(TaskId::from_u64(1), TaskAttemptId::from_u64(1)),
+                InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
             )
             .unwrap(),
         )
@@ -339,7 +358,7 @@ fn app_proxy_reports_closed_native_wake_bridge() {
         .send_task(
             TaskInput::new(
                 CounterInput::Increment,
-                InputProvenance::task(TaskId::from_u64(1), TaskAttemptId::from_u64(1)),
+                InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
             )
             .unwrap(),
         )
@@ -456,7 +475,7 @@ fn runtime_drains_ui_before_task_events_and_respects_budget() {
     runtime.enqueue_task(
         TaskInput::new(
             CounterInput::Increment,
-            InputProvenance::task(TaskId::from_u64(1), TaskAttemptId::from_u64(1)),
+            InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
         )
         .unwrap(),
     );
@@ -483,7 +502,10 @@ fn runtime_default_budget_caps_drained_inputs() {
         runtime.enqueue_task(
             TaskInput::new(
                 CounterInput::Increment,
-                InputProvenance::task(TaskId::from_u64(index), TaskAttemptId::from_u64(1)),
+                InputProvenance::task(
+                    TaskIntentId::from_u64(index),
+                    TaskIntentAttemptId::from_u64(1),
+                ),
             )
             .unwrap(),
         );
@@ -504,7 +526,10 @@ fn runtime_task_queue_overflow_records_diagnostic_and_drops_newest() {
         runtime.enqueue_task(
             TaskInput::new(
                 CounterInput::Increment,
-                InputProvenance::task(TaskId::from_u64(index), TaskAttemptId::from_u64(1)),
+                InputProvenance::task(
+                    TaskIntentId::from_u64(index),
+                    TaskIntentAttemptId::from_u64(1),
+                ),
             )
             .unwrap(),
         );
@@ -657,7 +682,7 @@ fn runtime_turns_recoverable_reducer_errors_into_diagnostics() {
 fn runtime_rejects_work_lane_provenance_for_ui_queue() {
     let error = match UiInput::new(
         CounterInput::Increment,
-        InputProvenance::task(TaskId::from_u64(1), TaskAttemptId::from_u64(1)),
+        InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
     ) {
         Ok(_) => panic!("task provenance should not enter the UI queue"),
         Err(error) => error,
@@ -801,76 +826,6 @@ fn resource_effects_expose_typed_payloads_and_kinds() {
         AppEffectPayload::InvalidateResource(effect)
             if effect.id() == &ResourceId::new("thumb:1") && effect.reason() == "source changed"
     ));
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SearchInput {
-    query: String,
-}
-
-#[test]
-fn task_registry_records_identity_scope_key_and_policy() {
-    let registration = TaskRegistration::<SearchInput>::new("search")
-        .scope(|_| AppScope::resource(ResourceId::new("search-results")))
-        .key(|input| TaskKey::new(format!("search:{}", input.query)))
-        .with_policy(TaskPolicy::continue_when_unobserved().dedupe_by_key());
-
-    let input = SearchInput {
-        query: "rust".into(),
-    };
-    assert_eq!(registration.id().as_str(), "search");
-    assert_eq!(
-        registration.scope_for(&input),
-        AppScope::resource(ResourceId::new("search-results"))
-    );
-    assert_eq!(registration.key_for(&input), TaskKey::new("search:rust"));
-    assert!(registration.policy().dedupes_by_key());
-    assert_eq!(
-        registration.policy().unobserved(),
-        UnobservedPolicy::Continue
-    );
-}
-
-#[test]
-fn task_record_rejects_events_from_stale_attempts() {
-    let mut record = TaskRecord::queued(
-        TaskId::from_u64(1),
-        TaskKey::new("search:rust"),
-        AppScope::app(),
-        TaskPolicy::cancel_when_unobserved(),
-    );
-
-    let first = record.start_attempt(TaskAttemptId::from_u64(1));
-    assert_eq!(first, TaskAttemptId::from_u64(1));
-    record.mark_running();
-    record.start_attempt(TaskAttemptId::from_u64(2));
-
-    assert!(record.accepts_attempt(TaskAttemptId::from_u64(2)));
-    assert!(!record.accepts_attempt(TaskAttemptId::from_u64(1)));
-    assert_eq!(
-        record.reject_stale(TaskAttemptId::from_u64(1)).code(),
-        &DiagnosticCode::STALE_TASK_EVENT
-    );
-}
-
-#[test]
-fn cancellation_status_is_honest_until_terminal_event_arrives() {
-    let mut record = TaskRecord::queued(
-        TaskId::from_u64(2),
-        TaskKey::new("media:import"),
-        AppScope::app(),
-        TaskPolicy::continue_when_unobserved(),
-    );
-
-    record.start_attempt(TaskAttemptId::from_u64(1));
-    record.mark_running();
-    let token = record.request_cancel();
-
-    assert!(token.is_cancelled());
-    assert_eq!(record.status(), TaskStatus::Cancelling);
-
-    record.mark_finished_after_cancel();
-    assert_eq!(record.status(), TaskStatus::FinishedAfterCancel);
 }
 
 #[test]
@@ -1026,7 +981,7 @@ fn app_scope_covers_runtime_ownership_kinds() {
 #[test]
 fn subscriptions_attach_and_detach_observers_without_owning_work() {
     let mut coord = CoordinationState::default();
-    let sub = Subscription::task(TaskKey::new("compile:main"))
+    let sub = Subscription::task(TaskIntentKey::new("compile:main"))
         .scope(AppScope::resource(ResourceId::new("project:main")))
         .observer(SurfaceId::from_u64(1));
 
@@ -1040,49 +995,22 @@ fn subscriptions_attach_and_detach_observers_without_owning_work() {
 }
 
 #[test]
-fn coordination_coalesces_progress_by_key() {
-    let mut coord = CoordinationState::default();
-
-    coord.record_progress(ProgressEvent::new(
-        TaskId::from_u64(1),
-        TaskAttemptId::from_u64(1),
-        CoalescingKey::new("bytes"),
-        "10",
-    ));
-    coord.record_progress(ProgressEvent::new(
-        TaskId::from_u64(1),
-        TaskAttemptId::from_u64(1),
-        CoalescingKey::new("bytes"),
-        "20",
-    ));
-
-    let drained = coord.drain_progress_budgeted(8);
-    assert_eq!(drained.len(), 1);
-    assert_eq!(drained[0].payload(), "20");
-    assert_eq!(coord.coalesced_progress_count(), 1);
-}
-
-#[test]
 fn prototype_latest_search_wins_rejects_stale_completion() {
     let mut app = PrototypeApp::latest_search();
 
-    app.start_search("rust", TaskAttemptId::from_u64(1));
-    app.start_search("rust async", TaskAttemptId::from_u64(2));
-    app.complete_search(TaskAttemptId::from_u64(1), vec!["old"]);
-    app.complete_search(TaskAttemptId::from_u64(2), vec!["new"]);
+    app.start_search("rust", TaskIntentAttemptId::from_u64(1));
+    app.start_search("rust async", TaskIntentAttemptId::from_u64(2));
+    app.complete_search(TaskIntentAttemptId::from_u64(1), vec!["old"]);
+    app.complete_search(TaskIntentAttemptId::from_u64(2), vec!["new"]);
 
     assert!(app.search_results().is_empty());
     app.drain();
 
     assert_eq!(app.search_results(), &["new"]);
-    assert_eq!(
-        app.diagnostics().count(&DiagnosticCode::STALE_TASK_EVENT),
-        0
-    );
 
     app.complete_search_with_provenance(
-        TaskAttemptId::from_u64(2),
-        TaskAttemptId::from_u64(1),
+        TaskIntentAttemptId::from_u64(2),
+        TaskIntentAttemptId::from_u64(1),
         vec!["payload-stale"],
     );
     app.drain();
@@ -1125,22 +1053,6 @@ fn stress_ten_thousand_task_events_use_coalesced_wakeups_and_budgeted_drains() {
 }
 
 #[test]
-fn prototype_two_surfaces_share_app_scoped_task_until_last_observer_detaches() {
-    let mut app = PrototypeApp::shared_compile_service();
-    let left = app.open_surface("left");
-    let right = app.open_surface("right");
-
-    app.observe_compile(left);
-    app.observe_compile(right);
-    app.close_surface(left);
-
-    assert_eq!(app.compile_task_status(), TaskStatus::Running);
-
-    app.close_surface(right);
-    assert_eq!(app.compile_task_status(), TaskStatus::Cancelling);
-}
-
-#[test]
 fn prototype_jsonrpc_service_handles_out_of_order_progress_cancel_timeout_and_reconnect() {
     let mut app = PrototypeApp::jsonrpc_service();
 
@@ -1165,32 +1077,6 @@ fn prototype_jsonrpc_service_handles_out_of_order_progress_cancel_timeout_and_re
         app.service_status(ServiceId::new("jsonrpc")),
         ServiceStatus::Running
     );
-}
-
-#[test]
-fn prototype_blocking_media_import_reports_cancelling_until_non_abortable_work_finishes() {
-    let mut app = PrototypeApp::blocking_media_import();
-
-    let handle = app.start_import("photos");
-    app.drain();
-
-    assert_eq!(
-        app.import_blocking_policy(handle),
-        Some(BlockingPolicy::NonAbortableReportCancelling)
-    );
-    assert_eq!(app.import_status(handle), TaskStatus::Running);
-
-    app.cancel_import(handle);
-    app.drain();
-
-    assert_eq!(app.import_status(handle), TaskStatus::Cancelling);
-
-    app.finish_non_abortable_import(handle);
-
-    assert_eq!(app.import_status(handle), TaskStatus::Cancelling);
-    app.drain();
-
-    assert_eq!(app.import_status(handle), TaskStatus::FinishedAfterCancel);
 }
 
 fn retained_command_for_test(name: surgeist_retained::CommandName) -> surgeist_retained::Command {

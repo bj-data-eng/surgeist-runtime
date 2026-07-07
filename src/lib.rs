@@ -31,8 +31,8 @@ mod tests;
 pub use bridge::{BridgeContext, BridgeDecodeError, BridgeError, RetainedBridge};
 pub use command::{AppCommand, CommandDescriptor, CommandName};
 pub use coord::{
-    AppScope, CoalescingKey, CoordinationState, ProgressEvent, ScopePathSegment, Subscription,
-    SubscriptionPriority, SubscriptionTarget, SubscriptionTargetKindId,
+    AppScope, CoordinationState, ScopePathSegment, Subscription, SubscriptionPriority,
+    SubscriptionTarget, SubscriptionTargetKindId,
 };
 pub use descriptor::{
     App, AppDescriptor, AppManifest, ResourceDescriptor, RootDescriptor, StartupWindow,
@@ -50,7 +50,7 @@ pub use effect::{
 pub use event::{AppEvent, EventDescriptor, EventName};
 pub use ids::{
     AppId, CalcId, CorrelationId, CustomScopeId, ExpressionId, ResourceId, RootId, ServiceId,
-    SurfaceId, TaskAttemptId, TaskId, TaskKey, TaskName, ValueExprId,
+    SurfaceId, ValueExprId,
 };
 pub use input::AppInput;
 pub use loop_::{AppHandler, AppLoop};
@@ -80,9 +80,8 @@ pub use surface::{
     WindowRoot,
 };
 pub use task::{
-    CancellationToken, TaskHandle, TaskIntentAttemptId, TaskIntentHandle, TaskIntentId,
-    TaskIntentKey, TaskIntentName, TaskPolicy, TaskPriority, TaskPriorityHint, TaskRecord,
-    TaskRegistration, TaskStatus, UnobservedPolicy,
+    TaskIntentAttemptId, TaskIntentHandle, TaskIntentId, TaskIntentKey, TaskIntentName,
+    TaskPriorityHint,
 };
 pub use testing::{FakeClock, FakeWakeBridge, FakeWindowBridge, HeadlessApp, HeadlessHarness};
 

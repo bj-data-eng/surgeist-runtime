@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use super::{CorrelationId, ServiceId, SurfaceId, TaskAttemptId, TaskId};
+use super::{CorrelationId, ServiceId, SurfaceId, TaskIntentAttemptId, TaskIntentId};
 
 static INPUT_SOURCE_UI: InputSourceId = InputSourceId::from_static("ui");
 static INPUT_SOURCE_RETAINED: InputSourceId = InputSourceId::from_static("retained");
@@ -60,8 +60,8 @@ pub struct SurfaceProvenance {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskProvenance {
-    task_id: TaskId,
-    task_attempt_id: TaskAttemptId,
+    task_id: TaskIntentId,
+    task_attempt_id: TaskIntentAttemptId,
     surface_id: Option<SurfaceId>,
 }
 
@@ -87,7 +87,7 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub fn task(task_id: TaskId, attempt_id: TaskAttemptId) -> Self {
+    pub fn task(task_id: TaskIntentId, attempt_id: TaskIntentAttemptId) -> Self {
         Self::from_origin(InputOrigin::Task(TaskProvenance {
             task_id,
             task_attempt_id: attempt_id,
@@ -160,7 +160,7 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub fn task_id(&self) -> Option<TaskId> {
+    pub fn task_id(&self) -> Option<TaskIntentId> {
         match &self.origin {
             InputOrigin::Task(value) => Some(value.task_id),
             _ => None,
@@ -168,7 +168,7 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub fn task_attempt_id(&self) -> Option<TaskAttemptId> {
+    pub fn task_attempt_id(&self) -> Option<TaskIntentAttemptId> {
         match &self.origin {
             InputOrigin::Task(value) => Some(value.task_attempt_id),
             _ => None,

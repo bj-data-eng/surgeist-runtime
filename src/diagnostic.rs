@@ -4,7 +4,8 @@ use std::{
 };
 
 use super::{
-    AppId, AppScope, InputProvenance, ResourceId, RootId, ServiceId, TaskAttemptId, TaskId,
+    AppId, AppScope, InputProvenance, ResourceId, RootId, ServiceId, TaskIntentAttemptId,
+    TaskIntentId,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -22,7 +23,6 @@ impl DiagnosticCode {
     pub const INVALID_RETAINED_PAYLOAD: Self = Self::from_static("invalid_retained_payload");
     pub const STALE_ELEMENT: Self = Self::from_static("stale_element");
     pub const INELIGIBLE_RETAINED_TARGET: Self = Self::from_static("ineligible_retained_target");
-    pub const STALE_TASK_EVENT: Self = Self::from_static("stale_task_event");
     pub const QUEUE_OVERFLOW: Self = Self::from_static("queue_overflow");
     pub const QUEUE_COALESCED: Self = Self::from_static("queue_coalesced");
     pub const REDUCER_ERROR: Self = Self::from_static("reducer_error");
@@ -108,8 +108,8 @@ pub struct Diagnostic {
     root_id: Option<RootId>,
     scope: Option<AppScope>,
     resource_id: Option<ResourceId>,
-    task_id: Option<TaskId>,
-    task_attempt_id: Option<TaskAttemptId>,
+    task_id: Option<TaskIntentId>,
+    task_attempt_id: Option<TaskIntentAttemptId>,
     service_id: Option<ServiceId>,
     emitted_effects: Vec<String>,
     queue: Option<QueueDiagnostic>,
@@ -174,7 +174,7 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub fn with_task(mut self, id: TaskId, attempt: TaskAttemptId) -> Self {
+    pub fn with_task(mut self, id: TaskIntentId, attempt: TaskIntentAttemptId) -> Self {
         self.task_id = Some(id);
         self.task_attempt_id = Some(attempt);
         self
@@ -244,12 +244,12 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub const fn task_id(&self) -> Option<TaskId> {
+    pub const fn task_id(&self) -> Option<TaskIntentId> {
         self.task_id
     }
 
     #[must_use]
-    pub const fn task_attempt_id(&self) -> Option<TaskAttemptId> {
+    pub const fn task_attempt_id(&self) -> Option<TaskIntentAttemptId> {
         self.task_attempt_id
     }
 

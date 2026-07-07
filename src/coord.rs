@@ -1,9 +1,9 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
 };
 
-use super::{CustomScopeId, ResourceId, ServiceId, SurfaceId, TaskAttemptId, TaskId, TaskKey};
+use super::{CustomScopeId, ResourceId, ServiceId, SurfaceId, TaskIntentKey};
 use surgeist_window::Id;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -172,7 +172,7 @@ impl SubscriptionTarget {
     }
 
     #[must_use]
-    pub fn task(key: TaskKey) -> Self {
+    pub fn task(key: TaskIntentKey) -> Self {
         Self::new(SubscriptionTargetKindId::TASK, key.as_str())
     }
 
@@ -225,7 +225,7 @@ impl Subscription {
     }
 
     #[must_use]
-    pub fn task(key: TaskKey) -> Self {
+    pub fn task(key: TaskIntentKey) -> Self {
         Self::new(SubscriptionTarget::task(key))
     }
 
@@ -278,89 +278,9 @@ impl Subscription {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CoalescingKey(String);
-
-impl CoalescingKey {
-    #[must_use]
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProgressEvent {
-    task_id: TaskId,
-    attempt_id: TaskAttemptId,
-    key: CoalescingKey,
-    payload: String,
-}
-
-impl ProgressEvent {
-    #[must_use]
-    pub fn new(
-        task_id: TaskId,
-        attempt_id: TaskAttemptId,
-        key: CoalescingKey,
-        payload: impl Into<String>,
-    ) -> Self {
-        Self {
-            task_id,
-            attempt_id,
-            key,
-            payload: payload.into(),
-        }
-    }
-
-    #[must_use]
-    pub const fn task_id(&self) -> TaskId {
-        self.task_id
-    }
-
-    #[must_use]
-    pub const fn attempt_id(&self) -> TaskAttemptId {
-        self.attempt_id
-    }
-
-    #[must_use]
-    pub const fn key(&self) -> &CoalescingKey {
-        &self.key
-    }
-
-    #[must_use]
-    pub fn payload(&self) -> &str {
-        &self.payload
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct ProgressSlot {
-    task_id: TaskId,
-    attempt_id: TaskAttemptId,
-    key: CoalescingKey,
-}
-
-impl From<&ProgressEvent> for ProgressSlot {
-    fn from(event: &ProgressEvent) -> Self {
-        Self {
-            task_id: event.task_id,
-            attempt_id: event.attempt_id,
-            key: event.key.clone(),
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct CoordinationState {
     observers: HashMap<SubscriptionTarget, HashSet<SurfaceId>>,
-    progress: HashMap<ProgressSlot, ProgressEvent>,
-    progress_order: VecDeque<ProgressSlot>,
-    coalesced_progress_count: usize,
 }
 
 impl CoordinationState {
@@ -393,36 +313,5 @@ impl CoordinationState {
     #[must_use]
     pub fn is_observed(&self, target: &SubscriptionTarget) -> bool {
         self.observer_count(target) > 0
-    }
-
-    pub fn record_progress(&mut self, event: ProgressEvent) {
-        let slot = ProgressSlot::from(&event);
-        if self.progress.insert(slot.clone(), event).is_some() {
-            self.coalesced_progress_count += 1;
-        } else {
-            self.progress_order.push_back(slot);
-        }
-    }
-
-    #[must_use]
-    pub fn drain_progress_budgeted(&mut self, budget: usize) -> Vec<ProgressEvent> {
-        let mut drained = Vec::new();
-
-        while drained.len() < budget {
-            let Some(slot) = self.progress_order.pop_front() else {
-                break;
-            };
-
-            if let Some(event) = self.progress.remove(&slot) {
-                drained.push(event);
-            }
-        }
-
-        drained
-    }
-
-    #[must_use]
-    pub const fn coalesced_progress_count(&self) -> usize {
-        self.coalesced_progress_count
     }
 }
