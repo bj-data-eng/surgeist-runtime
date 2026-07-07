@@ -1,4 +1,4 @@
-use super::testing::{PrototypeApp, ServiceRequestStatus};
+use super::testing::{BlockingPolicy, PrototypeApp, ServiceRequestStatus};
 use super::*;
 use std::time::Duration;
 
@@ -289,6 +289,7 @@ enum CounterInput {
     RedrawAll,
     RedrawWindow(surgeist_window::Id),
     Save,
+    StartTask,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -348,54 +349,6 @@ fn app_proxy_reports_closed_native_wake_bridge() {
 }
 
 #[test]
-fn fake_executor_records_spawn_and_cancel_requests() {
-    let mut executor = FakeExecutor::default();
-    let handle = executor
-        .spawn_task(SpawnRequest::new(
-            TaskId::from_u64(1),
-            TaskAttemptId::from_u64(1),
-            TaskKey::new("search:rust"),
-            AppScope::app(),
-        ))
-        .expect("fake spawn should succeed");
-
-    assert_eq!(handle.task_id(), TaskId::from_u64(1));
-    assert_eq!(executor.spawned().len(), 1);
-
-    executor
-        .cancel(TaskHandle::new(handle.task_id(), handle.attempt_id()))
-        .expect("fake cancel should succeed");
-    assert_eq!(
-        executor.cancelled(),
-        &[TaskHandle::new(
-            TaskId::from_u64(1),
-            TaskAttemptId::from_u64(1)
-        )]
-    );
-}
-
-#[test]
-fn fake_executor_records_typed_request_input() {
-    let mut executor = FakeExecutor::<CounterInput>::default();
-    executor
-        .spawn_task(
-            SpawnRequest::new(
-                TaskId::from_u64(2),
-                TaskAttemptId::from_u64(3),
-                TaskKey::new("counter:increment"),
-                AppScope::app(),
-            )
-            .with_input(CounterInput::Increment),
-        )
-        .expect("fake spawn should succeed");
-
-    assert_eq!(
-        executor.spawned()[0].input(),
-        Some(&CounterInput::Increment)
-    );
-}
-
-#[test]
 fn fake_clock_advances_scheduled_effects_deterministically() {
     let mut harness = HeadlessHarness::counter();
     harness.schedule_timer("debounce", Duration::from_millis(50));
@@ -423,6 +376,11 @@ impl Reducer<CounterState, CounterInput> for CounterReducer {
                 .with_effect(AppEffect::request_redraw(RedrawTarget::Window(*window_id))),
             CounterInput::Save => ReducerResult::unchanged()
                 .with_effect(AppEffect::persist("counter", AppScope::app())),
+            CounterInput::StartTask => ReducerResult::changed().with_effect(AppEffect::start_task(
+                TaskIntentName::new("counter"),
+                TaskIntentKey::new("counter:increment"),
+                AppScope::app(),
+            )),
         }
     }
 }
@@ -468,6 +426,28 @@ fn runtime_commits_state_before_executing_effects() {
     assert_eq!(runtime.state_version(), StateVersion::from_u64(1));
     assert_eq!(report.executed_effects(), 1);
     assert_eq!(report.redraw_requests(), &[SurfaceId::from_u64(1)]);
+}
+
+#[test]
+fn runtime_reports_task_intents_without_executing_them() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    runtime.enqueue_ui(
+        UiInput::new(
+            CounterInput::StartTask,
+            InputProvenance::ui(SurfaceId::from_u64(1)),
+        )
+        .unwrap(),
+    );
+
+    let report = runtime.drain_once(RuntimeBudget::new());
+
+    assert_eq!(report.executed_effects(), 1);
+    assert_eq!(report.task_intents().len(), 1);
+    assert_eq!(
+        report.task_intents()[0].kind().as_str(),
+        "runtime.start_task"
+    );
+    assert_eq!(runtime.diagnostics().entries().len(), 0);
 }
 
 #[test]
@@ -643,36 +623,6 @@ fn runtime_redraw_window_reports_surfaces_for_that_window() {
     assert_eq!(
         report.redraw_requests(),
         &[SurfaceId::from_u64(2), SurfaceId::from_u64(3)]
-    );
-}
-
-#[test]
-fn runtime_drops_stale_task_events_with_diagnostics() {
-    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.register_task_record(TaskRecord::running_for_test(
-        TaskId::from_u64(1),
-        TaskKey::new("search:rust"),
-        AppScope::app(),
-        TaskPolicy::continue_when_unobserved(),
-        TaskAttemptId::from_u64(2),
-    ));
-
-    runtime.enqueue_task(
-        TaskInput::new(
-            CounterInput::Increment,
-            InputProvenance::task(TaskId::from_u64(1), TaskAttemptId::from_u64(1)),
-        )
-        .unwrap(),
-    );
-    let report = runtime.drain_once(RuntimeBudget::default());
-
-    assert_eq!(runtime.state().value, 0);
-    assert_eq!(report.dropped_stale_task_events(), 1);
-    assert_eq!(
-        runtime
-            .diagnostics()
-            .count(&DiagnosticCode::STALE_TASK_EVENT),
-        1
     );
 }
 
@@ -1127,7 +1077,7 @@ fn prototype_latest_search_wins_rejects_stale_completion() {
     assert_eq!(app.search_results(), &["new"]);
     assert_eq!(
         app.diagnostics().count(&DiagnosticCode::STALE_TASK_EVENT),
-        1
+        0
     );
 
     app.complete_search_with_provenance(

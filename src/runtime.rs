@@ -1,11 +1,10 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 
 use super::{
-    AppEffect, AppEffectPayload, AppInput, BlockingPolicy, Diagnostic, DiagnosticCode,
-    DiagnosticLog, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer, RuntimeExecutor,
-    SpawnRequest, StateVersion, SurfaceId, TaskAttemptId, TaskHandle, TaskId, TaskIntentHandle,
-    TaskRecord, UiSurface,
+    AppEffect, AppEffectPayload, AppInput, Diagnostic, DiagnosticCode, DiagnosticLog,
+    InputProvenance, QueueDiagnostic, RedrawTarget, Reducer, StateVersion, SurfaceId, UiSurface,
 };
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeLane {
@@ -155,16 +154,13 @@ impl Default for RuntimeQueuePolicy {
 pub struct Runtime<State = (), R = (), Input = ()> {
     state: State,
     reducer: R,
-    executor: Option<Box<dyn RuntimeExecutor<Input>>>,
     state_version: StateVersion,
     surfaces: BTreeMap<SurfaceId, UiSurface>,
-    tasks: BTreeMap<TaskId, TaskRecord>,
     diagnostics: DiagnosticLog,
     ui_queue: VecDeque<UiInput<Input>>,
     task_queue: VecDeque<TaskInput<Input>>,
     service_queue: VecDeque<ServiceInput<Input>>,
     queue_policy: RuntimeQueuePolicy,
-    next_task_id: u64,
 }
 
 impl<State, R, Input> Runtime<State, R, Input> {
@@ -173,23 +169,14 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Self {
             state,
             reducer,
-            executor: None,
             state_version: StateVersion::from_u64(0),
             surfaces: BTreeMap::new(),
-            tasks: BTreeMap::new(),
             diagnostics: DiagnosticLog::with_capacity(256),
             ui_queue: VecDeque::new(),
             task_queue: VecDeque::new(),
             service_queue: VecDeque::new(),
             queue_policy: RuntimeQueuePolicy::default(),
-            next_task_id: 1,
         }
-    }
-
-    #[must_use]
-    pub fn with_executor(mut self, executor: Box<dyn RuntimeExecutor<Input>>) -> Self {
-        self.executor = Some(executor);
-        self
     }
 
     #[must_use]
@@ -220,10 +207,6 @@ impl<State, R, Input> Runtime<State, R, Input> {
 
     pub fn add_surface(&mut self, surface: UiSurface) {
         self.surfaces.insert(surface.id(), surface);
-    }
-
-    pub fn register_task_record(&mut self, record: TaskRecord) {
-        self.tasks.insert(record.id(), record);
     }
 
     pub fn enqueue_ui(&mut self, input: UiInput<Input>) {
@@ -329,7 +312,7 @@ where
                 .pop_front()
                 .expect("queue was checked before pop");
             drained_task_events += 1;
-            self.drain_task_input(input.into_app_input(), &mut report);
+            self.drain_input(RuntimeLane::Task, input.into_app_input(), &mut report);
         }
 
         let mut drained_service_events = 0;
@@ -347,39 +330,6 @@ where
 
         report.remaining_task_inputs = self.task_queue.len();
         report
-    }
-
-    fn drain_task_input(&mut self, input: AppInput<Input>, report: &mut RuntimeDrainReport) {
-        Self::record_drained_input(RuntimeLane::Task, report);
-        if self.drop_stale_task_event(input.provenance(), report) {
-            return;
-        }
-
-        self.reduce_input(input, report);
-    }
-
-    fn drop_stale_task_event(
-        &mut self,
-        provenance: &InputProvenance,
-        report: &mut RuntimeDrainReport,
-    ) -> bool {
-        let Some(task_id) = provenance.task_id() else {
-            return false;
-        };
-        let Some(attempt_id) = provenance.task_attempt_id() else {
-            return false;
-        };
-        let Some(record) = self.tasks.get(&task_id) else {
-            return false;
-        };
-
-        if record.accepts_attempt(attempt_id) {
-            return false;
-        }
-
-        report.dropped_stale_task_events += 1;
-        self.diagnostics.push(record.reject_stale(attempt_id));
-        true
     }
 
     fn drain_input(
@@ -421,8 +371,8 @@ where
         }
     }
 
-    fn execute_effect(&mut self, effect: &AppEffect, report: &mut RuntimeDrainReport) {
-        match effect.payload() {
+    fn execute_effect(&mut self, app_effect: &AppEffect, report: &mut RuntimeDrainReport) {
+        match app_effect.payload() {
             AppEffectPayload::RequestRedraw(effect) => {
                 report.executed_effects += 1;
                 match effect.target() {
@@ -443,16 +393,13 @@ where
                 report.executed_effects += 1;
                 self.diagnostics.push(effect.diagnostic().clone());
             }
-            AppEffectPayload::StartTask(effect) => {
+            AppEffectPayload::StartTask(_) => {
                 report.executed_effects += 1;
-                let task_id = self.allocate_task_id();
-                let attempt_id = super::TaskAttemptId::from_u64(1);
-                let request = SpawnRequest::from_start_effect(task_id, attempt_id, effect);
-                self.spawn_task(request, effect.name().as_str());
+                report.task_intents.push(app_effect.clone());
             }
-            AppEffectPayload::CancelTask(effect) => {
+            AppEffectPayload::CancelTask(_) => {
                 report.executed_effects += 1;
-                self.cancel_task(effect.handle());
+                report.task_intents.push(app_effect.clone());
             }
             AppEffectPayload::LoadResource(effect) => {
                 report.executed_effects += 1;
@@ -479,16 +426,9 @@ where
                         .with_effect("runtime.persist"),
                 );
             }
-            AppEffectPayload::ReprioritizeTask(effect) => {
+            AppEffectPayload::ReprioritizeTask(_) => {
                 report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("task reprioritization is not available")
-                        .with_task(
-                            TaskId::from_u64(effect.handle().id().as_u64()),
-                            TaskAttemptId::from_u64(effect.handle().attempt_id().as_u64()),
-                        )
-                        .with_effect("runtime.reprioritize_task"),
-                );
+                report.task_intents.push(app_effect.clone());
             }
             AppEffectPayload::StartService(effect) => {
                 report.executed_effects += 1;
@@ -525,58 +465,6 @@ where
                 );
             }
         }
-    }
-
-    fn spawn_task(&mut self, request: SpawnRequest<Input>, effect_name: &str) {
-        let Some(executor) = &mut self.executor else {
-            self.diagnostics
-                .push(effect_failed("runtime executor is not available").with_effect(effect_name));
-            return;
-        };
-
-        let result = match request.blocking_policy() {
-            BlockingPolicy::Abortable => executor.spawn_task(request),
-            BlockingPolicy::Blocking | BlockingPolicy::NonAbortableReportCancelling => {
-                executor.spawn_blocking_task(request)
-            }
-        };
-
-        if let Err(error) = result {
-            self.diagnostics.push(
-                effect_failed(format!("executor rejected task spawn: {error}"))
-                    .with_effect(effect_name),
-            );
-        }
-    }
-
-    fn cancel_task(&mut self, handle: TaskIntentHandle) {
-        let handle = TaskHandle::new(
-            TaskId::from_u64(handle.id().as_u64()),
-            TaskAttemptId::from_u64(handle.attempt_id().as_u64()),
-        );
-
-        let Some(executor) = &mut self.executor else {
-            self.diagnostics.push(
-                effect_failed("runtime executor is not available")
-                    .with_task(handle.task_id(), handle.attempt_id())
-                    .with_effect("runtime.cancel_task"),
-            );
-            return;
-        };
-
-        if let Err(error) = executor.cancel(handle) {
-            self.diagnostics.push(
-                effect_failed(format!("executor rejected task cancel: {error}"))
-                    .with_task(handle.task_id(), handle.attempt_id())
-                    .with_effect("runtime.cancel_task"),
-            );
-        }
-    }
-
-    fn allocate_task_id(&mut self) -> TaskId {
-        let id = TaskId::from_u64(self.next_task_id);
-        self.next_task_id += 1;
-        id
     }
 }
 
@@ -627,10 +515,10 @@ pub struct RuntimeDrainReport {
     drained_inputs: usize,
     executed_effects: usize,
     reducer_errors: usize,
-    dropped_stale_task_events: usize,
     remaining_task_inputs: usize,
     first_drained_lane: Option<RuntimeLane>,
     redraw_requests: Vec<SurfaceId>,
+    task_intents: Vec<AppEffect>,
 }
 
 impl RuntimeDrainReport {
@@ -650,11 +538,6 @@ impl RuntimeDrainReport {
     }
 
     #[must_use]
-    pub const fn dropped_stale_task_events(&self) -> usize {
-        self.dropped_stale_task_events
-    }
-
-    #[must_use]
     pub const fn remaining_task_inputs(&self) -> usize {
         self.remaining_task_inputs
     }
@@ -667,6 +550,11 @@ impl RuntimeDrainReport {
     #[must_use]
     pub fn redraw_requests(&self) -> &[SurfaceId] {
         &self.redraw_requests
+    }
+
+    #[must_use]
+    pub fn task_intents(&self) -> &[AppEffect] {
+        &self.task_intents
     }
 }
 

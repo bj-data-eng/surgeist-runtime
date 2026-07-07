@@ -11,7 +11,6 @@ mod descriptor;
 mod diagnostic;
 mod effect;
 mod event;
-mod executor;
 mod ids;
 mod input;
 mod loop_;
@@ -49,10 +48,6 @@ pub use effect::{
     StartServiceEffect, StartTaskEffect, StopServiceEffect,
 };
 pub use event::{AppEvent, EventDescriptor, EventName};
-pub use executor::{
-    BlockingPolicy, ExecutorError, ExecutorEvent, ExecutorEventPayload, ExecutorTaskHandle,
-    FakeExecutor, RuntimeExecutor, SpawnRequest,
-};
 pub use ids::{
     AppId, CalcId, CorrelationId, CustomScopeId, ExpressionId, ResourceId, RootId, ServiceId,
     SurfaceId, TaskAttemptId, TaskId, TaskKey, TaskName, ValueExprId,

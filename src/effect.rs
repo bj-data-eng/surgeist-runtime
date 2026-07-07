@@ -71,7 +71,7 @@ impl EffectKindId {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppEffect {
     payload: AppEffectPayload,
 }
@@ -209,7 +209,7 @@ impl AppEffect {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AppEffectPayload {
     RequestRedraw(RequestRedrawEffect),
     Persist(PersistEffect),

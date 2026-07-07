@@ -1,18 +1,17 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
 use super::Freshness;
 use super::{
-    AppEffect, AppInput, AppProxy, AppProxyError, AppProxyErrorCode, AppScope, BlockingPolicy,
-    CorrelationId, DiagnosticLog, FakeExecutor, InputProvenance, ProxyInput, QueuePolicy,
-    RedrawTarget, Reducer, ReducerResult, ResourceId, ResourceState, ResourceStateReadyTransition,
-    ResourceStatus, RootId, Runtime, RuntimeBudget, RuntimeDrainReport, RuntimeExecutor,
-    RuntimeInputError, ServiceId, ServiceInput, ServiceStatus, SpawnRequest, SurfaceId,
-    TaskAttemptId, TaskHandle, TaskId, TaskInput, TaskKey, TaskPolicy, TaskRecord, TaskStatus,
-    UiInput, UiSurface, WakeBridge, WindowRoot,
+    AppEffect, AppInput, AppProxy, AppProxyError, AppProxyErrorCode, AppScope, CorrelationId,
+    DiagnosticLog, InputProvenance, ProxyInput, QueuePolicy, RedrawTarget, Reducer, ReducerResult,
+    ResourceId, ResourceState, ResourceStateReadyTransition, ResourceStatus, RootId, Runtime,
+    RuntimeBudget, RuntimeDrainReport, RuntimeInputError, ServiceId, ServiceInput, ServiceStatus,
+    SurfaceId, TaskAttemptId, TaskHandle, TaskId, TaskInput, TaskKey, TaskPolicy, TaskRecord,
+    TaskStatus, UiInput, UiSurface, WakeBridge, WindowRoot,
 };
 use surgeist_window as window;
 
@@ -164,7 +163,6 @@ pub enum FakeWindowCommand {
 
 pub struct HeadlessHarness<State, R, Input = ()> {
     runtime: Runtime<State, R, Input>,
-    fake_executor: Arc<Mutex<FakeExecutor<Input>>>,
     fake_window: FakeWindowBridge,
     clock: FakeClock,
     surfaces: BTreeMap<String, SurfaceId>,
@@ -179,14 +177,10 @@ where
 {
     #[must_use]
     pub fn new(state: State, reducer: R) -> Self {
-        let fake_executor = Arc::new(Mutex::new(FakeExecutor::default()));
-        let runtime = Runtime::new(state, reducer).with_executor(Box::new(
-            SharedFakeExecutor::new(Arc::clone(&fake_executor)),
-        ));
+        let runtime = Runtime::new(state, reducer);
 
         Self {
             runtime,
-            fake_executor,
             fake_window: FakeWindowBridge::default(),
             clock: FakeClock::default(),
             surfaces: BTreeMap::new(),
@@ -208,12 +202,6 @@ where
     #[must_use]
     pub const fn state(&self) -> &State {
         self.runtime.state()
-    }
-
-    pub fn fake_executor(&self) -> MutexGuard<'_, FakeExecutor<Input>> {
-        self.fake_executor
-            .lock()
-            .expect("headless fake executor lock")
     }
 
     #[must_use]
@@ -368,10 +356,6 @@ impl CounterApp {
     pub const fn fake_window(&self) -> &FakeWindowBridge {
         self.harness.fake_window()
     }
-
-    pub fn fake_executor(&self) -> MutexGuard<'_, FakeExecutor<CounterInput>> {
-        self.harness.fake_executor()
-    }
 }
 
 pub struct ThumbnailImportExample {
@@ -407,15 +391,6 @@ impl ThumbnailImportExample {
     }
 
     pub fn choose_folder(&mut self, folder: &str) {
-        self.harness
-            .runtime_mut()
-            .register_task_record(TaskRecord::running_for_test(
-                self.import_handle.task_id(),
-                TaskKey::new("thumbnail-import"),
-                AppScope::app(),
-                TaskPolicy::continue_when_unobserved(),
-                self.import_handle.attempt_id(),
-            ));
         self.enqueue_ui(ThumbnailImportInput::FolderChosen {
             folder: folder.to_owned(),
         });
@@ -661,6 +636,13 @@ pub enum ServiceRequestStatus {
     TimedOutAfterCancel,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockingPolicy {
+    Abortable,
+    Blocking,
+    NonAbortableReportCancelling,
+}
+
 pub struct PrototypeApp {
     budget: RuntimeBudget,
     runtime: Runtime<PrototypeState, PrototypeReducer, PrototypeInput>,
@@ -753,14 +735,6 @@ impl PrototypeApp {
     }
 
     pub fn start_search(&mut self, query: &str, attempt: TaskAttemptId) {
-        self.runtime
-            .register_task_record(TaskRecord::running_for_test(
-                SEARCH_TASK_ID,
-                TaskKey::new("prototype:search"),
-                AppScope::app(),
-                TaskPolicy::continue_when_unobserved(),
-                attempt,
-            ));
         self.enqueue_ui(PrototypeInput::SearchStarted {
             query: query.to_owned(),
             attempt,
@@ -986,14 +960,6 @@ impl PrototypeApp {
             TaskAttemptId::from_u64(1),
         );
         self.next_import_task_id += 1;
-        self.runtime
-            .register_task_record(TaskRecord::running_for_test(
-                handle.task_id(),
-                TaskKey::new("prototype:media-import"),
-                AppScope::app(),
-                TaskPolicy::continue_when_unobserved(),
-                handle.attempt_id(),
-            ));
         self.enqueue_ui(PrototypeInput::ImportStarted {
             handle,
             blocking: BlockingPolicy::NonAbortableReportCancelling,
@@ -1261,48 +1227,4 @@ const THUMBNAIL_IMPORT_TASK_ID: TaskId = TaskId::from_u64(5);
 
 fn jsonrpc_service_id() -> ServiceId {
     ServiceId::new("jsonrpc")
-}
-
-#[derive(Clone, Debug)]
-struct SharedFakeExecutor<Input> {
-    inner: Arc<Mutex<FakeExecutor<Input>>>,
-}
-
-impl<Input> SharedFakeExecutor<Input> {
-    fn new(inner: Arc<Mutex<FakeExecutor<Input>>>) -> Self {
-        Self { inner }
-    }
-}
-
-impl<Input> RuntimeExecutor<Input> for SharedFakeExecutor<Input> {
-    fn spawn_task(
-        &mut self,
-        request: SpawnRequest<Input>,
-    ) -> Result<super::ExecutorTaskHandle, super::ExecutorError> {
-        self.inner
-            .lock()
-            .expect("headless fake executor lock")
-            .spawn_task(request)
-    }
-
-    fn spawn_blocking_task(
-        &mut self,
-        request: SpawnRequest<Input>,
-    ) -> Result<super::ExecutorTaskHandle, super::ExecutorError> {
-        self.inner
-            .lock()
-            .expect("headless fake executor lock")
-            .spawn_blocking_task(request)
-    }
-
-    fn cancel(&mut self, handle: TaskHandle) -> Result<(), super::ExecutorError> {
-        self.inner
-            .lock()
-            .expect("headless fake executor lock")
-            .cancel(handle)
-    }
-
-    fn name(&self) -> &'static str {
-        "shared-fake"
-    }
 }
