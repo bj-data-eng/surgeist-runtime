@@ -15,6 +15,21 @@ fn typed_ids_are_stable_and_debuggable() {
 }
 
 #[test]
+fn task_intent_identity_types_are_runtime_owned() {
+    let name = TaskIntentName::new("search");
+    let key = TaskIntentKey::new("search:rust");
+    let id = TaskIntentId::from_u64(7);
+    let attempt = TaskIntentAttemptId::from_u64(2);
+    let handle = TaskIntentHandle::new(id, attempt);
+
+    assert_eq!(name.as_str(), "search");
+    assert_eq!(key.as_str(), "search:rust");
+    assert_eq!(id.as_u64(), 7);
+    assert_eq!(handle.id(), id);
+    assert_eq!(handle.attempt_id(), attempt);
+}
+
+#[test]
 fn provenance_carries_causal_fields() {
     let parent = CorrelationId::from_u64(1);
     let child = InputProvenance::task(TaskId::from_u64(2), TaskAttemptId::from_u64(3))

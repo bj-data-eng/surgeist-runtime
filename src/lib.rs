@@ -85,8 +85,9 @@ pub use surface::{
     WindowRoot,
 };
 pub use task::{
-    CancellationToken, TaskHandle, TaskPolicy, TaskPriority, TaskRecord, TaskRegistration,
-    TaskStatus, UnobservedPolicy,
+    CancellationToken, TaskHandle, TaskIntentAttemptId, TaskIntentHandle, TaskIntentId,
+    TaskIntentKey, TaskIntentName, TaskPolicy, TaskPriority, TaskPriorityHint, TaskRecord,
+    TaskRegistration, TaskStatus, UnobservedPolicy,
 };
 pub use testing::{FakeClock, FakeWakeBridge, FakeWindowBridge, HeadlessApp, HeadlessHarness};
 
