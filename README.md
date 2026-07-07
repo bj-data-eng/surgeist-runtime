@@ -1,11 +1,11 @@
 # surgeist-runtime
 
-App runtime orchestration contracts for Surgeist.
-
-This crate owns the bounded runtime plane for Surgeist apps: app lifecycle
-coordination, input and effect scheduling contracts, resource lifecycle policy
-hooks, invalidation scheduling, animation/frame scheduling, diagnostics, and the
-coordination boundary between app events and pipeline reruns.
+This crate owns app runtime orchestration contracts for Surgeist. It emits
+abstract task intents and accepts task-originated app inputs, but concrete task
+execution, cancellation, lifecycle, progress coalescing, and Tokio integration
+belong to `surgeist-task`. Root `surgeist` owns the adapter that lowers runtime
+task intents into task crate requests and maps task events back into runtime
+queues.
 
 Root `surgeist` owns integration with concrete Surgeist crates such as template,
 CSS, style, retained, text, layout, render, window, and task. Keep parser,

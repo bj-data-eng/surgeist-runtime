@@ -96,6 +96,11 @@ fn task_input_uses_runtime_intent_provenance() {
 }
 
 #[test]
+fn crate_identity_remains_runtime_after_task_boundary_cleanup() {
+    assert_eq!(crate_name(), "surgeist-runtime");
+}
+
+#[test]
 fn provenance_carries_causal_fields() {
     let parent = CorrelationId::from_u64(1);
     let child = InputProvenance::task(TaskIntentId::from_u64(2), TaskIntentAttemptId::from_u64(3))

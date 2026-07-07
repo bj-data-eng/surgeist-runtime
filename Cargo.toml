@@ -13,7 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 surgeist-retained = { path = "../surgeist-retained", version = "=0.1.0" }
-surgeist-task = { path = "../surgeist-task", version = "=0.1.0" }
 surgeist-window = { path = "../surgeist-window", version = "=0.1.0" }
 
 [features]
