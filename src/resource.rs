@@ -531,6 +531,45 @@ mod tests {
         ResourceState::new(ResourceId::new("photos"))
     }
 
+    struct Observable<'a> {
+        status: ResourceStatus,
+        value: Option<u32>,
+        error: Option<&'static str>,
+        freshness: Freshness,
+        stale_reason: Option<&'static str>,
+        generation: u64,
+        active_operation: Option<&'a ResourceOperation>,
+    }
+
+    fn assert_observable(resource: &ResourceState<u32, &'static str>, expected: Observable<'_>) {
+        assert_eq!(resource.id(), &ResourceId::new("photos"));
+        assert_eq!(resource.status(), expected.status);
+        assert_eq!(resource.value().copied(), expected.value);
+        assert_eq!(resource.error().copied(), expected.error);
+        assert_eq!(resource.is_renderable(), expected.value.is_some());
+        assert_eq!(resource.freshness(), expected.freshness);
+        assert_eq!(resource.stale_reason(), expected.stale_reason);
+        assert_eq!(
+            resource.generation(),
+            ResourceGeneration::from_u64(expected.generation)
+        );
+        assert_eq!(resource.active_operation(), expected.active_operation);
+
+        let snapshot = resource.snapshot();
+        assert_eq!(snapshot.id(), &ResourceId::new("photos"));
+        assert_eq!(snapshot.status(), expected.status);
+        assert_eq!(snapshot.value().copied(), expected.value);
+        assert_eq!(snapshot.error().copied(), expected.error);
+        assert_eq!(snapshot.is_renderable(), expected.value.is_some());
+        assert_eq!(snapshot.freshness(), expected.freshness);
+        assert_eq!(snapshot.stale_reason(), expected.stale_reason);
+        assert_eq!(
+            snapshot.generation(),
+            ResourceGeneration::from_u64(expected.generation)
+        );
+        assert_eq!(snapshot.active_operation(), expected.active_operation);
+    }
+
     #[test]
     fn operations_are_issued_and_overlap_and_mismatch_are_rejected() {
         let mut resource = resource();
@@ -627,6 +666,98 @@ mod tests {
     }
 
     #[test]
+    fn stale_non_active_operations_are_mismatches_and_failure_atomic() {
+        let mut resource = resource();
+        let stale = resource.begin_load().unwrap();
+        resource.ready(&stale, 1).unwrap();
+        let active = resource.begin_refresh().unwrap();
+        let snapshot = resource.snapshot();
+
+        let error = resource.ready(&stale, 2).unwrap_err();
+
+        assert_eq!(error.code(), ResourceStateErrorCode::OperationMismatch);
+        assert_eq!(error.resource_id(), resource.id());
+        assert_eq!(error.expected_operation(), Some(&active));
+        assert_eq!(error.actual_operation(), Some(&stale));
+        assert_eq!(error.source(), None);
+        assert_eq!(resource.snapshot(), snapshot);
+        assert_observable(
+            &resource,
+            Observable {
+                status: ResourceStatus::Refreshing,
+                value: Some(1),
+                error: None,
+                freshness: Freshness::Fresh,
+                stale_reason: None,
+                generation: 3,
+                active_operation: Some(&active),
+            },
+        );
+    }
+
+    #[test]
+    fn failed_while_cancelling_is_invalid_and_failure_atomic() {
+        let mut resource = resource();
+        let operation = resource.begin_load().unwrap();
+        resource.cancel(&operation).unwrap();
+        let snapshot = resource.snapshot();
+
+        let error = resource
+            .failed(&operation, "timeout", FailureVisibility::ClearValue)
+            .unwrap_err();
+
+        assert_eq!(error.code(), ResourceStateErrorCode::InvalidTransition);
+        assert_eq!(error.resource_id(), resource.id());
+        assert_eq!(error.expected_operation(), None);
+        assert_eq!(error.actual_operation(), None);
+        assert_eq!(error.source(), None);
+        assert_eq!(resource.snapshot(), snapshot);
+        assert_observable(
+            &resource,
+            Observable {
+                status: ResourceStatus::Cancelling,
+                value: None,
+                error: None,
+                freshness: Freshness::Fresh,
+                stale_reason: None,
+                generation: 2,
+                active_operation: Some(&operation),
+            },
+        );
+    }
+
+    #[test]
+    fn later_begin_clears_last_cancelled_replay_classification() {
+        let mut resource = resource();
+        let cancelled = resource.begin_load().unwrap();
+        resource.cancel(&cancelled).unwrap();
+        resource.cancelled(&cancelled).unwrap();
+        let active = resource.begin_load().unwrap();
+        let snapshot = resource.snapshot();
+
+        let error = resource.cancel(&cancelled).unwrap_err();
+
+        assert_eq!(error.code(), ResourceStateErrorCode::OperationMismatch);
+        assert_eq!(error.resource_id(), resource.id());
+        assert_eq!(error.expected_operation(), Some(&active));
+        assert_eq!(error.actual_operation(), Some(&cancelled));
+        assert_eq!(error.source(), None);
+        assert_eq!(resource.snapshot(), snapshot);
+        assert_observable(
+            &resource,
+            Observable {
+                status: ResourceStatus::Loading,
+                value: None,
+                error: None,
+                freshness: Freshness::Fresh,
+                stale_reason: None,
+                generation: 4,
+                active_operation: Some(&active),
+            },
+        );
+    }
+
+    #[test]
     fn transitions_preserve_and_clear_observable_fields_exactly() {
         let mut resource = resource();
         let load = resource.begin_load().unwrap();
@@ -680,6 +811,122 @@ mod tests {
 
         assert_eq!(resource.generation(), generation);
         assert_eq!(resource.snapshot(), snapshot);
+    }
+
+    #[test]
+    fn stale_with_a_changed_reason_advances_generation_and_replaces_reason() {
+        let mut resource = resource();
+        let load = resource.begin_load().unwrap();
+        resource.ready(&load, 1).unwrap();
+        resource.mark_stale("expired").unwrap();
+
+        resource.mark_stale("source changed").unwrap();
+
+        assert_observable(
+            &resource,
+            Observable {
+                status: ResourceStatus::Stale,
+                value: Some(1),
+                error: None,
+                freshness: Freshness::Stale,
+                stale_reason: Some("source changed"),
+                generation: 4,
+                active_operation: None,
+            },
+        );
+    }
+
+    #[test]
+    fn no_value_cancellation_and_failure_visibility_have_exact_field_matrices() {
+        let mut cancellation = resource();
+        let operation = cancellation.begin_load().unwrap();
+        cancellation.cancel(&operation).unwrap();
+        assert_observable(
+            &cancellation,
+            Observable {
+                status: ResourceStatus::Cancelling,
+                value: None,
+                error: None,
+                freshness: Freshness::Fresh,
+                stale_reason: None,
+                generation: 2,
+                active_operation: Some(&operation),
+            },
+        );
+        cancellation.cancelled(&operation).unwrap();
+        assert_observable(
+            &cancellation,
+            Observable {
+                status: ResourceStatus::Cancelled,
+                value: None,
+                error: None,
+                freshness: Freshness::Fresh,
+                stale_reason: None,
+                generation: 3,
+                active_operation: None,
+            },
+        );
+
+        for (visibility, error) in [
+            (FailureVisibility::KeepStaleValue, "keep"),
+            (FailureVisibility::ClearValue, "clear"),
+        ] {
+            let mut failure = resource();
+            let operation = failure.begin_load().unwrap();
+
+            failure.failed(&operation, error, visibility).unwrap();
+
+            assert_observable(
+                &failure,
+                Observable {
+                    status: ResourceStatus::Failed,
+                    value: None,
+                    error: Some(error),
+                    freshness: Freshness::Fresh,
+                    stale_reason: None,
+                    generation: 2,
+                    active_operation: None,
+                },
+            );
+        }
+
+        for (visibility, value, freshness, stale_reason, error) in [
+            (
+                FailureVisibility::KeepStaleValue,
+                Some(1),
+                Freshness::Stale,
+                Some("expired"),
+                "retain",
+            ),
+            (
+                FailureVisibility::ClearValue,
+                None,
+                Freshness::Fresh,
+                None,
+                "discard",
+            ),
+        ] {
+            let mut failure = resource();
+            let load = failure.begin_load().unwrap();
+            failure.ready(&load, 1).unwrap();
+            failure.mark_stale("expired").unwrap();
+            let refresh = failure.begin_refresh().unwrap();
+
+            failure.failed(&refresh, error, visibility).unwrap();
+
+            assert_observable(
+                &failure,
+                Observable {
+                    status: ResourceStatus::Failed,
+                    value,
+                    error: Some(error),
+                    freshness,
+                    stale_reason,
+                    generation: 5,
+                    active_operation: None,
+                },
+            );
+        }
     }
 
     #[test]
