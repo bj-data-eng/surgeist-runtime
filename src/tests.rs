@@ -637,6 +637,39 @@ fn render_ack_rejects_stale_versions_and_replays_without_consuming_new_work() {
 }
 
 #[test]
+fn root_replacement_preserves_render_version_and_rejects_lower_ack_atomically() {
+    let mut surface = surface_for_lifecycle_tests();
+    surface.ready().unwrap();
+    surface
+        .invalidate_snapshot(StateVersion::from_u64(2))
+        .unwrap();
+    let initial_frame = surface.begin_render(StateVersion::from_u64(2)).unwrap();
+    surface.acknowledge_render(initial_frame).unwrap();
+
+    surface
+        .replace_root(SurfaceRoot::new(RootId::new("replacement")))
+        .unwrap();
+    let before_stale_ack = surface.invalidations().to_vec();
+    let stale_frame = surface.begin_render(StateVersion::from_u64(1)).unwrap();
+    assert_eq!(
+        surface.acknowledge_render(stale_frame).unwrap_err().code(),
+        SurfaceErrorCode::StaleRenderAck
+    );
+    assert_eq!(surface.invalidations(), before_stale_ack);
+
+    let current_frame = surface.begin_render(StateVersion::from_u64(2)).unwrap();
+    let current_ack = surface.acknowledge_render(current_frame).unwrap();
+    assert_eq!(current_ack.consumed_invalidations(), 1);
+    assert_eq!(current_ack.remaining_invalidations(), 0);
+
+    surface.set_scroll_offset(SurfacePoint::new(3, 4)).unwrap();
+    let newer_frame = surface.begin_render(StateVersion::from_u64(3)).unwrap();
+    let newer_ack = surface.acknowledge_render(newer_frame).unwrap();
+    assert_eq!(newer_ack.consumed_invalidations(), 1);
+    assert_eq!(newer_ack.remaining_invalidations(), 0);
+}
+
+#[test]
 fn render_ack_retains_post_begin_and_newer_snapshot_invalidations_with_exact_counts() {
     let mut surface = surface_for_lifecycle_tests();
     surface.ready().unwrap();

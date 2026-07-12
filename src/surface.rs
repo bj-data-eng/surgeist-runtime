@@ -848,7 +848,6 @@ impl UiSurface {
         self.generation = generation;
         self.focused = None;
         self.hovered = None;
-        self.last_rendered_state_version = None;
         self.last_rendered_invalidation_generation = None;
         self.push_invalidation(
             invalidation_generation,
