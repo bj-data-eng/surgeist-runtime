@@ -55,9 +55,16 @@ numeric_id!(SurfaceInvalidationGeneration);
 numeric_id!(ResourceGeneration);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A nonzero identifier for correlating related input causality.
+///
+/// Construct it with [`Self::try_from_u64`]; zero is rejected so a present
+/// correlation can never be ambiguous with absence.
 pub struct CorrelationId(NonZeroU64);
 
 impl CorrelationId {
+    /// Validates and constructs a nonzero correlation identifier.
+    ///
+    /// Returns [`CorrelationError::Zero`] for `0`.
     pub fn try_from_u64(value: u64) -> Result<Self, CorrelationError> {
         NonZeroU64::new(value)
             .map(Self)
@@ -65,6 +72,7 @@ impl CorrelationId {
     }
 
     #[must_use]
+    /// Returns the validated nonzero numeric value.
     pub const fn get(self) -> u64 {
         self.0.get()
     }
@@ -77,7 +85,9 @@ impl CorrelationId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+/// Rejects an invalid correlation identifier.
 pub enum CorrelationError {
+    /// The supplied numeric value was zero.
     Zero,
 }
 

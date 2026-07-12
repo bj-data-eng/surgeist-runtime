@@ -36,6 +36,10 @@ impl InputSourceId {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Describes an input's source and explicitly recorded causal context.
+///
+/// Current and parent correlations are independent: constructors leave both
+/// absent, and changing one never invents or alters the other.
 pub struct InputProvenance {
     origin: InputOrigin,
     correlation: Correlation,
@@ -44,6 +48,9 @@ pub struct InputProvenance {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// The explicit presence or absence of one causal correlation.
+///
+/// [`Self::Absent`] is the default and carries no synthetic correlation ID.
 pub enum Correlation {
     #[default]
     Absent,
@@ -66,6 +73,7 @@ impl Correlation {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// The semantic source category and source-specific identifying data for input.
 pub enum InputOrigin {
     System,
     Ui(SurfaceProvenance),
@@ -76,11 +84,13 @@ pub enum InputOrigin {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Surface-origin data bound to a generation-qualified [`SurfaceRef`].
 pub struct SurfaceProvenance {
     surface: SurfaceRef,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Task-origin data, with an optional generation-qualified surface attachment.
 pub struct TaskProvenance {
     task_id: TaskIntentId,
     task_attempt_id: TaskIntentAttemptId,
@@ -127,6 +137,14 @@ impl InputProvenance {
         Self::from_origin(InputOrigin::Window(SurfaceProvenance { surface }))
     }
 
+    /// Attaches a generation-qualified surface when this origin permits it.
+    ///
+    /// Task origins accept one surface; repeating the same attachment is
+    /// idempotent, while a different surface is rejected. UI, adapter, and
+    /// window origins likewise accept only their existing surface. System and
+    /// service origins do not support surface attachment. On rejection, the
+    /// returned [`ProvenanceError`] preserves the origin plus existing and
+    /// attempted surface values; this value is unchanged because it is consumed.
     pub fn try_with_surface(mut self, surface: SurfaceRef) -> Result<Self, ProvenanceError> {
         let origin = self.origin.clone();
         match &mut self.origin {
@@ -291,13 +309,22 @@ impl InputProvenance {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+/// Classifies a rejected provenance surface attachment.
 pub enum ProvenanceErrorCode {
+    /// A task origin already has a different surface attached.
     SurfaceAlreadyAttached,
+    /// A UI, adapter, or window origin cannot be attached to another surface.
     SurfaceOverwriteUnsupported,
+    /// A system or service origin cannot carry a surface attachment.
     SurfaceUnsupportedOrigin,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Typed details for a rejected surface attachment.
+///
+/// The error retains the source origin, any existing generation-qualified
+/// surface, and the attempted surface so callers can handle rejection without
+/// parsing display text.
 pub struct ProvenanceError {
     code: ProvenanceErrorCode,
     origin: InputOrigin,
@@ -321,21 +348,25 @@ impl ProvenanceError {
     }
 
     #[must_use]
+    /// Returns the typed reason the attachment was rejected.
     pub const fn code(&self) -> ProvenanceErrorCode {
         self.code
     }
 
     #[must_use]
+    /// Returns the origin whose surface attachment was rejected.
     pub const fn origin(&self) -> &InputOrigin {
         &self.origin
     }
 
     #[must_use]
+    /// Returns the existing generation-qualified surface, when one was present.
     pub const fn existing_surface(&self) -> Option<SurfaceRef> {
         self.existing_surface
     }
 
     #[must_use]
+    /// Returns the generation-qualified surface that was requested.
     pub const fn attempted_surface(&self) -> SurfaceRef {
         self.attempted_surface
     }
