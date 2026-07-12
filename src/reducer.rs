@@ -1,39 +1,20 @@
 use super::{AppEffect, AppInput, EffectBatch, InputProvenance};
 
 pub trait Reducer<State, Input> {
-    fn reduce(&mut self, state: &mut State, input: AppInput<Input>) -> ReducerResult;
+    fn reduce(&mut self, state: &State, input: &AppInput<Input>) -> ReducerResult<State>;
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct ReducerResult {
-    changed: bool,
+#[derive(Clone, Debug)]
+pub struct ReducerCommit {
     effects: EffectBatch,
-    recoverable_error: Option<String>,
     provenance: Option<InputProvenance>,
 }
 
-impl ReducerResult {
+impl ReducerCommit {
     #[must_use]
-    pub fn changed() -> Self {
+    pub fn new() -> Self {
         Self {
-            changed: true,
             effects: EffectBatch::new(),
-            recoverable_error: None,
-            provenance: None,
-        }
-    }
-
-    #[must_use]
-    pub fn unchanged() -> Self {
-        Self::default()
-    }
-
-    #[must_use]
-    pub fn recoverable_failure(error: impl Into<String>) -> Self {
-        Self {
-            changed: false,
-            effects: EffectBatch::new(),
-            recoverable_error: Some(error.into()),
             provenance: None,
         }
     }
@@ -57,22 +38,101 @@ impl ReducerResult {
     }
 
     #[must_use]
-    pub const fn is_changed(&self) -> bool {
-        self.changed
-    }
-
-    #[must_use]
-    pub fn effects(&self) -> &[AppEffect] {
-        self.effects.effects()
-    }
-
-    #[must_use]
-    pub fn recoverable_error(&self) -> Option<&str> {
-        self.recoverable_error.as_deref()
+    pub const fn effects(&self) -> &EffectBatch {
+        &self.effects
     }
 
     #[must_use]
     pub const fn provenance(&self) -> Option<&InputProvenance> {
         self.provenance.as_ref()
+    }
+}
+
+impl Default for ReducerCommit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ReducerChange<State> {
+    state: State,
+    commit: ReducerCommit,
+}
+
+impl<State> ReducerChange<State> {
+    #[must_use]
+    pub fn new(state: State, commit: ReducerCommit) -> Self {
+        Self { state, commit }
+    }
+
+    #[must_use]
+    pub const fn state(&self) -> &State {
+        &self.state
+    }
+
+    #[must_use]
+    pub const fn commit(&self) -> &ReducerCommit {
+        &self.commit
+    }
+
+    pub(crate) fn into_parts(self) -> (State, ReducerCommit) {
+        (self.state, self.commit)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ReducerFailure {
+    message: String,
+    provenance: Option<InputProvenance>,
+}
+
+impl ReducerFailure {
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            provenance: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_provenance(mut self, provenance: InputProvenance) -> Self {
+        self.provenance = Some(provenance);
+        self
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    #[must_use]
+    pub const fn provenance(&self) -> Option<&InputProvenance> {
+        self.provenance.as_ref()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ReducerResult<State> {
+    Unchanged(ReducerCommit),
+    Changed(ReducerChange<State>),
+    RecoverableFailure(ReducerFailure),
+}
+
+impl<State> ReducerResult<State> {
+    #[must_use]
+    pub fn unchanged(commit: ReducerCommit) -> Self {
+        Self::Unchanged(commit)
+    }
+
+    #[must_use]
+    pub fn changed(state: State, commit: ReducerCommit) -> Self {
+        Self::Changed(ReducerChange::new(state, commit))
+    }
+
+    #[must_use]
+    pub fn recoverable_failure(failure: ReducerFailure) -> Self {
+        Self::RecoverableFailure(failure)
     }
 }

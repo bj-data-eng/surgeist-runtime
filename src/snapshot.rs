@@ -1,3 +1,5 @@
+use crate::ids::{CheckedNext, VersionError};
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StateVersion(u64);
 
@@ -8,7 +10,8 @@ impl StateVersion {
     }
 
     #[must_use]
-    pub const fn from_u64(value: u64) -> Self {
+    #[cfg(test)]
+    pub(crate) const fn from_u64(value: u64) -> Self {
         Self(value)
     }
 
@@ -16,10 +19,14 @@ impl StateVersion {
     pub const fn as_u64(self) -> u64 {
         self.0
     }
+}
 
-    #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0 + 1)
+impl CheckedNext for StateVersion {
+    fn checked_next(self) -> Result<Self, VersionError> {
+        self.0
+            .checked_add(1)
+            .map(Self)
+            .ok_or(VersionError::Overflow)
     }
 }
 

@@ -6,8 +6,9 @@ use std::{
 
 use super::{
     AppInput, AppProxy, AppProxyError, AppProxyErrorCode, CorrelationId, InputProvenance,
-    ProxyInput, QueuePolicy, Reducer, ReducerResult, Runtime, RuntimeBudget, ServiceId,
-    ServiceInput, ServiceStatus, TaskInput, TaskIntentAttemptId, TaskIntentId, UiInput, WakeBridge,
+    ProxyInput, QueuePolicy, Reducer, ReducerCommit, ReducerResult, Runtime, RuntimeBudget,
+    ServiceId, ServiceInput, ServiceStatus, TaskInput, TaskIntentAttemptId, TaskIntentId, UiInput,
+    WakeBridge,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -460,38 +461,39 @@ struct PrototypeReducer;
 impl Reducer<PrototypeState, PrototypeInput> for PrototypeReducer {
     fn reduce(
         &mut self,
-        state: &mut PrototypeState,
-        input: AppInput<PrototypeInput>,
-    ) -> ReducerResult {
-        if state.reducing {
-            state.reducer_reentry_count += 1;
+        state: &PrototypeState,
+        input: &AppInput<PrototypeInput>,
+    ) -> ReducerResult<PrototypeState> {
+        let mut next_state = state.clone();
+        if next_state.reducing {
+            next_state.reducer_reentry_count += 1;
         }
-        state.reducing = true;
+        next_state.reducing = true;
 
         let changed = match input.payload() {
             PrototypeInput::SearchStarted { query, attempt } => {
-                state.active_search_query = Some(query.clone());
-                state.active_search_attempt = Some(*attempt);
+                next_state.active_search_query = Some(query.clone());
+                next_state.active_search_attempt = Some(*attempt);
                 true
             }
             PrototypeInput::SearchComplete { attempt, results } => {
-                if state.active_search_attempt == Some(*attempt) {
-                    state.search_results.clone_from(results);
+                if next_state.active_search_attempt == Some(*attempt) {
+                    next_state.search_results.clone_from(results);
                     true
                 } else {
                     false
                 }
             }
             PrototypeInput::LogLine(line) => {
-                state.log_lines.push(line.clone());
+                next_state.log_lines.push(line.clone());
                 true
             }
             PrototypeInput::Progress(_index) => {
-                state.progress_count += 1;
+                next_state.progress_count += 1;
                 true
             }
             PrototypeInput::ServiceProgress { request, message } => {
-                state
+                next_state
                     .service_progress
                     .entry(*request)
                     .or_default()
@@ -499,41 +501,41 @@ impl Reducer<PrototypeState, PrototypeInput> for PrototypeReducer {
                 true
             }
             PrototypeInput::ServiceResponse { request, message } => {
-                state.responses.insert(*request, message.clone());
-                state
+                next_state.responses.insert(*request, message.clone());
+                next_state
                     .request_status
                     .insert(*request, ServiceRequestStatus::Completed);
                 true
             }
             PrototypeInput::ServiceCancelled { request } => {
-                state
+                next_state
                     .request_status
                     .insert(*request, ServiceRequestStatus::Cancelled);
                 true
             }
             PrototypeInput::ServiceTimedOut { request } => {
-                state
+                next_state
                     .request_status
                     .insert(*request, ServiceRequestStatus::TimedOutAfterCancel);
                 true
             }
             PrototypeInput::ServiceReconnected => {
-                state.jsonrpc_status = ServiceStatus::Running;
+                next_state.jsonrpc_status = ServiceStatus::Running;
                 true
             }
             PrototypeInput::ToolCallStarted { request } => {
-                state
+                next_state
                     .request_status
                     .insert(*request, ServiceRequestStatus::Pending);
                 true
             }
         };
 
-        state.reducing = false;
+        next_state.reducing = false;
         if changed {
-            ReducerResult::changed()
+            ReducerResult::changed(next_state, ReducerCommit::new())
         } else {
-            ReducerResult::unchanged()
+            ReducerResult::unchanged(ReducerCommit::new())
         }
     }
 }

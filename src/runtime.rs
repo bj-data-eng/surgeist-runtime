@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, VecDeque};
 use super::{
     AppEffect, AppEffectPayload, AppInput, CoordinationState, Diagnostic, DiagnosticCode,
     DiagnosticLog, ElementPhase, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer,
-    StateVersion, Subscription, SubscriptionChange, SubscriptionError, SubscriptionErrorCode,
-    SubscriptionKey, SurfaceElementRef, SurfaceError, SurfaceErrorCode, SurfaceGeneration,
-    SurfaceId, SurfaceLifecycle, SurfaceMutation, SurfacePoint, SurfaceRef, SurfaceRenderAck,
-    SurfaceRenderFrame, SurfaceRenderState, SurfaceRoute, SurfaceSize, UiSurface,
+    ReducerResult, StateVersion, Subscription, SubscriptionChange, SubscriptionError,
+    SubscriptionErrorCode, SubscriptionKey, SurfaceElementRef, SurfaceError, SurfaceErrorCode,
+    SurfaceGeneration, SurfaceId, SurfaceLifecycle, SurfaceMutation, SurfacePoint, SurfaceRef,
+    SurfaceRenderAck, SurfaceRenderFrame, SurfaceRenderState, SurfaceRoute, SurfaceSize, UiSurface,
 };
 use crate::ids::CheckedNext;
 
@@ -175,7 +175,7 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Self {
             state,
             reducer,
-            state_version: StateVersion::from_u64(0),
+            state_version: StateVersion::initial(),
             surfaces: BTreeMap::new(),
             retired_surface_generations: BTreeMap::new(),
             coordination: CoordinationState::default(),
@@ -669,22 +669,31 @@ where
 
     fn reduce_input(&mut self, input: AppInput<Input>, report: &mut RuntimeDrainReport) {
         let provenance = input.provenance().clone();
-        let result = self.reducer.reduce(&mut self.state, input);
-        if let Some(error) = result.recoverable_error() {
-            report.reducer_errors += 1;
-            self.diagnostics.push(Diagnostic::error(
-                DiagnosticCode::REDUCER_ERROR,
-                error,
-                result.provenance().cloned().unwrap_or(provenance),
-            ));
-            return;
+        match self.reducer.reduce(&self.state, &input) {
+            ReducerResult::Unchanged(commit) => self.execute_commit(&commit, report),
+            ReducerResult::Changed(change) => {
+                let (state, commit) = change.into_parts();
+                let next_version = self
+                    .state_version
+                    .checked_next()
+                    .expect("state version overflow is handled by the runtime transaction");
+                self.state = state;
+                self.state_version = next_version;
+                self.execute_commit(&commit, report);
+            }
+            ReducerResult::RecoverableFailure(failure) => {
+                report.reducer_errors += 1;
+                self.diagnostics.push(Diagnostic::error(
+                    DiagnosticCode::REDUCER_ERROR,
+                    failure.message(),
+                    failure.provenance().cloned().unwrap_or(provenance),
+                ));
+            }
         }
+    }
 
-        if result.is_changed() {
-            self.state_version = StateVersion::from_u64(self.state_version.as_u64() + 1);
-        }
-
-        for effect in result.effects() {
+    fn execute_commit(&mut self, commit: &super::ReducerCommit, report: &mut RuntimeDrainReport) {
+        for effect in commit.effects().effects() {
             self.execute_effect(effect, report);
         }
     }

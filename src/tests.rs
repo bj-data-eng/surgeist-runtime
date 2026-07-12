@@ -1,5 +1,6 @@
 use super::testing::{FakeWakeBridge, HeadlessHarness, PrototypeApp, ServiceRequestStatus};
 use super::*;
+use crate::ids::CheckedNext;
 use std::time::Duration;
 
 fn correlation(value: u64) -> CorrelationId {
@@ -1865,7 +1866,7 @@ fn zero_capacity_diagnostic_log_counts_without_retaining_entries() {
     assert_eq!(log.count(&DiagnosticCode::QUEUE_OVERFLOW), 1);
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct CounterState {
     value: u32,
 }
@@ -1875,7 +1876,6 @@ enum CounterInput {
     Increment,
     RedrawAll,
     RedrawWindow(WindowId),
-    Save,
     StartTask,
 }
 
@@ -1943,55 +1943,124 @@ fn fake_clock_advances_scheduled_effects_deterministically() {
 struct CounterReducer;
 
 impl Reducer<CounterState, CounterInput> for CounterReducer {
-    fn reduce(&mut self, state: &mut CounterState, input: AppInput<CounterInput>) -> ReducerResult {
+    fn reduce(
+        &mut self,
+        state: &CounterState,
+        input: &AppInput<CounterInput>,
+    ) -> ReducerResult<CounterState> {
         match input.payload() {
-            CounterInput::Increment => {
-                state.value += 1;
-                ReducerResult::changed().with_effect(AppEffect::request_redraw(
-                    RedrawTarget::surface(SurfaceRef::new(
-                        SurfaceId::from_u64(1),
-                        SurfaceGeneration::initial(),
-                    )),
-                ))
-            }
-            CounterInput::RedrawAll => ReducerResult::unchanged()
-                .with_effect(AppEffect::request_redraw(RedrawTarget::all())),
-            CounterInput::RedrawWindow(window_id) => ReducerResult::unchanged()
-                .with_effect(AppEffect::request_redraw(RedrawTarget::Window(*window_id))),
-            CounterInput::Save => ReducerResult::unchanged()
-                .with_effect(AppEffect::persist("counter", AppScope::app())),
-            CounterInput::StartTask => ReducerResult::changed().with_effect(AppEffect::start_task(
-                TaskIntentName::new("counter"),
-                TaskIntentKey::new("counter:increment"),
-                AppScope::app(),
-            )),
+            CounterInput::Increment => ReducerResult::changed(
+                CounterState {
+                    value: state.value + 1,
+                },
+                ReducerCommit::new().with_effect(AppEffect::request_redraw(RedrawTarget::surface(
+                    SurfaceRef::new(SurfaceId::from_u64(1), SurfaceGeneration::initial()),
+                ))),
+            ),
+            CounterInput::RedrawAll => ReducerResult::unchanged(
+                ReducerCommit::new().with_effect(AppEffect::request_redraw(RedrawTarget::all())),
+            ),
+            CounterInput::RedrawWindow(window_id) => ReducerResult::unchanged(
+                ReducerCommit::new()
+                    .with_effect(AppEffect::request_redraw(RedrawTarget::Window(*window_id))),
+            ),
+            CounterInput::StartTask => ReducerResult::changed(
+                state.clone(),
+                ReducerCommit::new().with_effect(AppEffect::start_task(
+                    TaskIntentName::new("counter"),
+                    TaskIntentKey::new("counter:increment"),
+                    AppScope::app(),
+                )),
+            ),
         }
     }
 }
 
 #[test]
-fn reducer_returns_effects_without_executing_them() {
+fn reducer_borrows_state_and_input_and_returns_a_replacement_state() {
     let mut reducer = CounterReducer;
-    let mut state = CounterState::default();
-    let result = reducer.reduce(
-        &mut state,
-        AppInput::new(CounterInput::Increment, InputProvenance::system()),
+    let state = CounterState::default();
+    let input = AppInput::new(CounterInput::Increment, InputProvenance::system());
+    let result = reducer.reduce(&state, &input);
+
+    assert_eq!(state.value, 0);
+    assert!(matches!(input.payload(), CounterInput::Increment));
+    match result {
+        ReducerResult::Changed(change) => {
+            assert_eq!(change.state().value, 1);
+            assert_eq!(change.commit().effects().effects().len(), 1);
+            assert_eq!(
+                change.commit().effects().effects()[0].kind(),
+                &EffectKindId::REQUEST_REDRAW
+            );
+        }
+        ReducerResult::Unchanged(_) | ReducerResult::RecoverableFailure(_) => {
+            panic!("increment must return a changed reducer result")
+        }
+    }
+}
+
+#[test]
+fn reducer_success_commits_construct_effects_and_provenance_explicitly() {
+    let provenance = InputProvenance::system().with_sequence(17);
+    let effects = EffectBatch::new()
+        .push(AppEffect::persist("counter", AppScope::app()))
+        .push(AppEffect::request_redraw(RedrawTarget::all()));
+    let commit = ReducerCommit::default()
+        .with_effect(AppEffect::diagnostic(Diagnostic::info(
+            DiagnosticCode::QUEUE_COALESCED,
+            "counter commit",
+            InputProvenance::system(),
+        )))
+        .with_effects(effects)
+        .with_provenance(provenance.clone());
+
+    assert!(ReducerCommit::new().effects().effects().is_empty());
+    assert_eq!(ReducerCommit::new().provenance(), None);
+    assert_eq!(commit.provenance(), Some(&provenance));
+    assert_eq!(commit.effects().effects().len(), 2);
+    assert_eq!(commit.effects().effects()[0].kind(), &EffectKindId::PERSIST);
+    assert_eq!(
+        commit.effects().effects()[1].kind(),
+        &EffectKindId::REQUEST_REDRAW
     );
 
-    assert_eq!(state.value, 1);
-    assert!(result.is_changed());
-    assert_eq!(result.effects().len(), 1);
-    assert_eq!(result.effects()[0].kind(), &EffectKindId::REQUEST_REDRAW);
+    let changed = ReducerResult::changed(CounterState { value: 2 }, commit);
+    match changed {
+        ReducerResult::Changed(change) => {
+            assert_eq!(change.state(), &CounterState { value: 2 });
+            assert_eq!(change.commit().provenance(), Some(&provenance));
+        }
+        ReducerResult::Unchanged(_) | ReducerResult::RecoverableFailure(_) => {
+            panic!("changed constructor must retain state and commit")
+        }
+    }
+}
 
-    let result = reducer.reduce(
-        &mut state,
-        AppInput::new(CounterInput::Save, InputProvenance::system()),
+#[test]
+fn reducer_failure_cannot_commit_state_or_effects() {
+    let provenance = InputProvenance::system().with_sequence(18);
+    let result: ReducerResult<CounterState> = ReducerResult::recoverable_failure(
+        ReducerFailure::new("counter reducer rejected input").with_provenance(provenance.clone()),
     );
 
-    assert_eq!(state.value, 1);
-    assert!(!result.is_changed());
-    assert_eq!(result.effects().len(), 1);
-    assert_eq!(result.effects()[0].kind(), &EffectKindId::PERSIST);
+    match result {
+        ReducerResult::RecoverableFailure(failure) => {
+            assert_eq!(failure.message(), "counter reducer rejected input");
+            assert_eq!(failure.provenance(), Some(&provenance));
+        }
+        ReducerResult::Unchanged(_) | ReducerResult::Changed(_) => {
+            panic!("recoverable failure must remain disjoint from successful commits")
+        }
+    }
+}
+
+#[test]
+fn state_version_checked_next_rejects_overflow_without_changing_the_original() {
+    let version = StateVersion::from_u64(u64::MAX);
+
+    assert_eq!(version.checked_next(), Err(VersionError::Overflow));
+    assert_eq!(version, StateVersion::from_u64(u64::MAX));
 }
 
 #[test]
@@ -2209,10 +2278,10 @@ struct FailingReducer;
 impl Reducer<CounterState, CounterInput> for FailingReducer {
     fn reduce(
         &mut self,
-        _state: &mut CounterState,
-        _input: AppInput<CounterInput>,
-    ) -> ReducerResult {
-        ReducerResult::recoverable_failure("counter reducer rejected input")
+        _state: &CounterState,
+        _input: &AppInput<CounterInput>,
+    ) -> ReducerResult<CounterState> {
+        ReducerResult::recoverable_failure(ReducerFailure::new("counter reducer rejected input"))
     }
 }
 
