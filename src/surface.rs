@@ -100,7 +100,6 @@ impl ElementRegistration {
         self.phases.iter().copied()
     }
 
-    #[allow(dead_code)]
     fn supports(&self, phase: ElementPhase) -> bool {
         self.phases.contains(&phase)
     }
@@ -338,7 +337,6 @@ pub struct SurfaceMutation {
 
 impl SurfaceMutation {
     #[must_use]
-    #[allow(dead_code)]
     const fn unchanged() -> Self {
         Self {
             changed: false,
@@ -348,7 +346,6 @@ impl SurfaceMutation {
     }
 
     #[must_use]
-    #[allow(dead_code)]
     const fn changed_result(
         invalidation_generation: SurfaceInvalidationGeneration,
         redraw_required: bool,
@@ -631,7 +628,6 @@ impl UiSurface {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub(crate) fn validate_element(
         &self,
         reference: SurfaceElementRef,
@@ -653,7 +649,13 @@ impl UiSurface {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C03 Runtime registry validation will delegate routes to this C01 local validator"
+        )
+    )]
     pub(crate) fn validate_route(
         &self,
         route: &SurfaceRoute,
@@ -679,7 +681,13 @@ impl UiSurface {
         Ok(route.target())
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C03 Runtime registry mutation will delegate viewport updates to this C01 local primitive"
+        )
+    )]
     pub(crate) fn set_viewport(
         &mut self,
         viewport: SurfaceSize,
@@ -692,7 +700,13 @@ impl UiSurface {
         })
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C03 Runtime registry mutation will delegate scroll updates to this C01 local primitive"
+        )
+    )]
     pub(crate) fn set_scroll_offset(
         &mut self,
         scroll_offset: SurfacePoint,
@@ -705,7 +719,13 @@ impl UiSurface {
         })
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C03 Runtime registry mutation will delegate focus updates to this C01 local primitive"
+        )
+    )]
     pub(crate) fn set_focus(
         &mut self,
         focused: Option<SurfaceElementRef>,
@@ -721,7 +741,13 @@ impl UiSurface {
         })
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "C03 Runtime registry mutation will delegate hover updates to this C01 local primitive"
+        )
+    )]
     pub(crate) fn set_hover(
         &mut self,
         hovered: Option<SurfaceElementRef>,
@@ -737,7 +763,6 @@ impl UiSurface {
         })
     }
 
-    #[allow(dead_code)]
     fn apply_change(
         &mut self,
         kind: SurfaceInvalidationKind,
