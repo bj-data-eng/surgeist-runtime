@@ -1,9 +1,9 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, error::Error, fmt};
 
-use super::{CorrelationId, ServiceId, SurfaceId, TaskIntentAttemptId, TaskIntentId};
+use super::{CorrelationId, ServiceId, SurfaceRef, TaskIntentAttemptId, TaskIntentId};
 
 static INPUT_SOURCE_UI: InputSourceId = InputSourceId::from_static("ui");
-static INPUT_SOURCE_RETAINED: InputSourceId = InputSourceId::from_static("retained");
+static INPUT_SOURCE_ADAPTER: InputSourceId = InputSourceId::from_static("adapter");
 static INPUT_SOURCE_TASK: InputSourceId = InputSourceId::from_static("task");
 static INPUT_SOURCE_SERVICE: InputSourceId = InputSourceId::from_static("service");
 static INPUT_SOURCE_WINDOW: InputSourceId = InputSourceId::from_static("window");
@@ -14,7 +14,7 @@ pub struct InputSourceId(Cow<'static, str>);
 
 impl InputSourceId {
     pub const UI: Self = Self::from_static("ui");
-    pub const RETAINED: Self = Self::from_static("retained");
+    pub const ADAPTER: Self = Self::from_static("adapter");
     pub const TASK: Self = Self::from_static("task");
     pub const SERVICE: Self = Self::from_static("service");
     pub const WINDOW: Self = Self::from_static("window");
@@ -38,16 +38,38 @@ impl InputSourceId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InputProvenance {
     origin: InputOrigin,
-    correlation_id: CorrelationId,
-    parent_correlation_id: Option<CorrelationId>,
+    correlation: Correlation,
+    parent_correlation: Correlation,
     sequence: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Correlation {
+    #[default]
+    Absent,
+    Present(CorrelationId),
+}
+
+impl Correlation {
+    #[must_use]
+    pub const fn is_absent(self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    #[must_use]
+    pub const fn id(self) -> Option<CorrelationId> {
+        match self {
+            Self::Absent => None,
+            Self::Present(id) => Some(id),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InputOrigin {
     System,
     Ui(SurfaceProvenance),
-    Retained(SurfaceProvenance),
+    Adapter(SurfaceProvenance),
     Task(TaskProvenance),
     Service(ServiceProvenance),
     Window(SurfaceProvenance),
@@ -55,14 +77,14 @@ pub enum InputOrigin {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SurfaceProvenance {
-    surface_id: SurfaceId,
+    surface: SurfaceRef,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskProvenance {
     task_id: TaskIntentId,
     task_attempt_id: TaskIntentAttemptId,
-    surface_id: Option<SurfaceId>,
+    surface: Option<SurfaceRef>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,13 +99,13 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub fn ui(surface_id: SurfaceId) -> Self {
-        Self::from_origin(InputOrigin::Ui(SurfaceProvenance { surface_id }))
+    pub fn ui(surface: SurfaceRef) -> Self {
+        Self::from_origin(InputOrigin::Ui(SurfaceProvenance { surface }))
     }
 
     #[must_use]
-    pub fn retained(surface_id: SurfaceId) -> Self {
-        Self::from_origin(InputOrigin::Retained(SurfaceProvenance { surface_id }))
+    pub fn adapter(surface: SurfaceRef) -> Self {
+        Self::from_origin(InputOrigin::Adapter(SurfaceProvenance { surface }))
     }
 
     #[must_use]
@@ -91,7 +113,7 @@ impl InputProvenance {
         Self::from_origin(InputOrigin::Task(TaskProvenance {
             task_id,
             task_attempt_id: attempt_id,
-            surface_id: None,
+            surface: None,
         }))
     }
 
@@ -101,27 +123,70 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub fn window(surface_id: SurfaceId) -> Self {
-        Self::from_origin(InputOrigin::Window(SurfaceProvenance { surface_id }))
+    pub fn window(surface: SurfaceRef) -> Self {
+        Self::from_origin(InputOrigin::Window(SurfaceProvenance { surface }))
     }
 
-    #[must_use]
-    pub fn with_surface(mut self, id: SurfaceId) -> Self {
-        if let InputOrigin::Task(task) = &mut self.origin {
-            task.surface_id = Some(id);
+    pub fn try_with_surface(mut self, surface: SurfaceRef) -> Result<Self, ProvenanceError> {
+        let origin = self.origin.clone();
+        match &mut self.origin {
+            InputOrigin::Task(task) => match task.surface {
+                Some(existing) if existing == surface => Ok(self),
+                Some(existing) => Err(ProvenanceError::new(
+                    ProvenanceErrorCode::SurfaceAlreadyAttached,
+                    origin,
+                    Some(existing),
+                    surface,
+                )),
+                None => {
+                    task.surface = Some(surface);
+                    Ok(self)
+                }
+            },
+            InputOrigin::Ui(existing)
+            | InputOrigin::Adapter(existing)
+            | InputOrigin::Window(existing) => {
+                if existing.surface == surface {
+                    Ok(self)
+                } else {
+                    Err(ProvenanceError::new(
+                        ProvenanceErrorCode::SurfaceOverwriteUnsupported,
+                        origin,
+                        Some(existing.surface),
+                        surface,
+                    ))
+                }
+            }
+            InputOrigin::System | InputOrigin::Service(_) => Err(ProvenanceError::new(
+                ProvenanceErrorCode::SurfaceUnsupportedOrigin,
+                origin,
+                None,
+                surface,
+            )),
         }
-        self
     }
 
     #[must_use]
     pub fn with_correlation(mut self, id: CorrelationId) -> Self {
-        self.correlation_id = id;
+        self.correlation = Correlation::Present(id);
         self
     }
 
     #[must_use]
-    pub fn with_parent(mut self, id: CorrelationId) -> Self {
-        self.parent_correlation_id = Some(id);
+    pub fn without_correlation(mut self) -> Self {
+        self.correlation = Correlation::Absent;
+        self
+    }
+
+    #[must_use]
+    pub fn with_parent_correlation(mut self, id: CorrelationId) -> Self {
+        self.parent_correlation = Correlation::Present(id);
+        self
+    }
+
+    #[must_use]
+    pub fn without_parent_correlation(mut self) -> Self {
+        self.parent_correlation = Correlation::Absent;
         self
     }
 
@@ -132,11 +197,17 @@ impl InputProvenance {
     }
 
     #[must_use]
+    pub fn without_sequence(mut self) -> Self {
+        self.sequence = None;
+        self
+    }
+
+    #[must_use]
     pub fn source(&self) -> &InputSourceId {
         match &self.origin {
             InputOrigin::System => &INPUT_SOURCE_SYSTEM,
             InputOrigin::Ui(_) => &INPUT_SOURCE_UI,
-            InputOrigin::Retained(_) => &INPUT_SOURCE_RETAINED,
+            InputOrigin::Adapter(_) => &INPUT_SOURCE_ADAPTER,
             InputOrigin::Task(_) => &INPUT_SOURCE_TASK,
             InputOrigin::Service(_) => &INPUT_SOURCE_SERVICE,
             InputOrigin::Window(_) => &INPUT_SOURCE_WINDOW,
@@ -149,12 +220,12 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub fn surface_id(&self) -> Option<SurfaceId> {
+    pub fn surface(&self) -> Option<SurfaceRef> {
         match &self.origin {
-            InputOrigin::Ui(value) | InputOrigin::Retained(value) | InputOrigin::Window(value) => {
-                Some(value.surface_id)
+            InputOrigin::Ui(value) | InputOrigin::Adapter(value) | InputOrigin::Window(value) => {
+                Some(value.surface)
             }
-            InputOrigin::Task(value) => value.surface_id,
+            InputOrigin::Task(value) => value.surface,
             InputOrigin::System | InputOrigin::Service(_) => None,
         }
     }
@@ -184,13 +255,23 @@ impl InputProvenance {
     }
 
     #[must_use]
-    pub const fn correlation_id(&self) -> CorrelationId {
-        self.correlation_id
+    pub const fn correlation(&self) -> Correlation {
+        self.correlation
+    }
+
+    #[must_use]
+    pub const fn parent_correlation(&self) -> Correlation {
+        self.parent_correlation
+    }
+
+    #[must_use]
+    pub const fn correlation_id(&self) -> Option<CorrelationId> {
+        self.correlation.id()
     }
 
     #[must_use]
     pub const fn parent_correlation_id(&self) -> Option<CorrelationId> {
-        self.parent_correlation_id
+        self.parent_correlation.id()
     }
 
     #[must_use]
@@ -201,9 +282,73 @@ impl InputProvenance {
     fn from_origin(origin: InputOrigin) -> Self {
         Self {
             origin,
-            correlation_id: CorrelationId::from_u64(0),
-            parent_correlation_id: None,
+            correlation: Correlation::Absent,
+            parent_correlation: Correlation::Absent,
             sequence: None,
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ProvenanceErrorCode {
+    SurfaceAlreadyAttached,
+    SurfaceOverwriteUnsupported,
+    SurfaceUnsupportedOrigin,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProvenanceError {
+    code: ProvenanceErrorCode,
+    origin: InputOrigin,
+    existing_surface: Option<SurfaceRef>,
+    attempted_surface: SurfaceRef,
+}
+
+impl ProvenanceError {
+    fn new(
+        code: ProvenanceErrorCode,
+        origin: InputOrigin,
+        existing_surface: Option<SurfaceRef>,
+        attempted_surface: SurfaceRef,
+    ) -> Self {
+        Self {
+            code,
+            origin,
+            existing_surface,
+            attempted_surface,
+        }
+    }
+
+    #[must_use]
+    pub const fn code(&self) -> ProvenanceErrorCode {
+        self.code
+    }
+
+    #[must_use]
+    pub const fn origin(&self) -> &InputOrigin {
+        &self.origin
+    }
+
+    #[must_use]
+    pub const fn existing_surface(&self) -> Option<SurfaceRef> {
+        self.existing_surface
+    }
+
+    #[must_use]
+    pub const fn attempted_surface(&self) -> SurfaceRef {
+        self.attempted_surface
+    }
+}
+
+impl fmt::Display for ProvenanceError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "surface attachment {:?} rejected for {:?}: existing {:?}, attempted {:?}",
+            self.code, self.origin, self.existing_surface, self.attempted_surface
+        )
+    }
+}
+
+impl Error for ProvenanceError {}

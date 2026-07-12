@@ -52,15 +52,15 @@ pub use effect::{
 };
 pub use event::{AppEvent, EventDescriptor, EventName};
 pub use ids::{
-    AppId, CalcId, CorrelationId, CustomScopeId, ElementId, ExpressionId, ResourceGeneration,
-    ResourceId, ResourceOperationId, RootId, ServiceId, SurfaceGeneration, SurfaceId,
-    SurfaceInvalidationGeneration, ValueExprId, VersionError, WindowId,
+    AppId, CalcId, CorrelationError, CorrelationId, CustomScopeId, ElementId, ExpressionId,
+    ResourceGeneration, ResourceId, ResourceOperationId, RootId, ServiceId, SurfaceGeneration,
+    SurfaceId, SurfaceInvalidationGeneration, ValueExprId, VersionError, WindowId,
 };
 pub use input::AppInput;
 pub use loop_::AppLoop;
 pub use provenance::{
-    InputOrigin, InputProvenance, InputSourceId, ServiceProvenance, SurfaceProvenance,
-    TaskProvenance,
+    Correlation, InputOrigin, InputProvenance, InputSourceId, ProvenanceError, ProvenanceErrorCode,
+    ServiceProvenance, SurfaceProvenance, TaskProvenance,
 };
 pub use proxy::{AppProxy, AppProxyError, AppProxyErrorCode, ProxyInput, QueuePolicy, WakeBridge};
 pub use reducer::{Reducer, ReducerResult};

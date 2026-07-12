@@ -53,7 +53,43 @@ numeric_id!(ElementId);
 numeric_id!(SurfaceGeneration);
 numeric_id!(SurfaceInvalidationGeneration);
 numeric_id!(ResourceGeneration);
-numeric_id!(CorrelationId);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct CorrelationId(NonZeroU64);
+
+impl CorrelationId {
+    pub fn try_from_u64(value: u64) -> Result<Self, CorrelationError> {
+        NonZeroU64::new(value)
+            .map(Self)
+            .ok_or(CorrelationError::Zero)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_u64(value: u64) -> Self {
+        Self::try_from_u64(value).expect("crate-local correlation IDs must be nonzero")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CorrelationError {
+    Zero,
+}
+
+impl fmt::Display for CorrelationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Zero => formatter.write_str("correlation ID must be nonzero"),
+        }
+    }
+}
+
+impl Error for CorrelationError {}
 
 impl SurfaceGeneration {
     #[must_use]

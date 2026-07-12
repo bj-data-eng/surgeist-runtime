@@ -2,6 +2,36 @@ use super::testing::{FakeWakeBridge, HeadlessHarness, PrototypeApp, ServiceReque
 use super::*;
 use std::time::Duration;
 
+fn correlation(value: u64) -> CorrelationId {
+    CorrelationId::try_from_u64(value).expect("test correlation must be nonzero")
+}
+
+fn surface_ref(surface_id: u64, generation: u64) -> SurfaceRef {
+    SurfaceRef::new(
+        SurfaceId::from_u64(surface_id),
+        SurfaceGeneration::from_u64(generation),
+    )
+}
+
+fn assert_empty_causality(provenance: &InputProvenance) {
+    assert_eq!(provenance.correlation(), Correlation::Absent);
+    assert_eq!(provenance.parent_correlation(), Correlation::Absent);
+    assert_eq!(provenance.sequence(), None);
+}
+
+fn assert_surface_error(
+    error: ProvenanceError,
+    code: ProvenanceErrorCode,
+    origin: &InputOrigin,
+    existing_surface: Option<SurfaceRef>,
+    attempted_surface: SurfaceRef,
+) {
+    assert_eq!(error.code(), code);
+    assert_eq!(error.origin(), origin);
+    assert_eq!(error.existing_surface(), existing_surface);
+    assert_eq!(error.attempted_surface(), attempted_surface);
+}
+
 #[test]
 fn runtime_has_no_sibling_dependencies_or_exports() {
     let manifest = include_str!("../Cargo.toml");
@@ -97,7 +127,7 @@ fn typed_ids_are_stable_and_debuggable() {
     assert_eq!(AppId::new("photo.lab").as_str(), "photo.lab");
     assert_eq!(SurfaceId::from_u64(7).as_u64(), 7);
     assert_eq!(TaskIntentAttemptId::from_u64(3).as_u64(), 3);
-    assert_eq!(CorrelationId::from_u64(11).as_u64(), 11);
+    assert_eq!(CorrelationId::try_from_u64(11).unwrap().get(), 11);
     assert_eq!(
         format!("{:?}", ResourceId::new("thumbs:42")),
         "ResourceId(\"thumbs:42\")"
@@ -1593,11 +1623,13 @@ fn crate_identity_remains_runtime_after_task_boundary_cleanup() {
 
 #[test]
 fn provenance_carries_causal_fields() {
-    let parent = CorrelationId::from_u64(1);
+    let parent = correlation(1);
+    let surface = surface_ref(4, 2);
     let child = InputProvenance::task(TaskIntentId::from_u64(2), TaskIntentAttemptId::from_u64(3))
-        .with_surface(SurfaceId::from_u64(4))
-        .with_correlation(CorrelationId::from_u64(5))
-        .with_parent(parent);
+        .try_with_surface(surface)
+        .unwrap()
+        .with_correlation(correlation(5))
+        .with_parent_correlation(parent);
 
     assert_eq!(child.source(), &InputSourceId::TASK);
     assert!(matches!(child.origin(), InputOrigin::Task(_)));
@@ -1606,9 +1638,174 @@ fn provenance_carries_causal_fields() {
         child.task_attempt_id(),
         Some(TaskIntentAttemptId::from_u64(3))
     );
-    assert_eq!(child.surface_id(), Some(SurfaceId::from_u64(4)));
-    assert_eq!(child.correlation_id(), CorrelationId::from_u64(5));
+    assert_eq!(child.surface(), Some(surface));
+    assert_eq!(child.correlation_id(), Some(correlation(5)));
     assert_eq!(child.parent_correlation_id(), Some(parent));
+}
+
+#[test]
+fn provenance_correlation_rejects_zero_and_defaults_to_absent() {
+    assert_eq!(CorrelationId::try_from_u64(0), Err(CorrelationError::Zero));
+    assert_eq!(Correlation::default(), Correlation::Absent);
+    assert!(Correlation::default().is_absent());
+    assert_eq!(Correlation::default().id(), None);
+}
+
+#[test]
+fn provenance_constructors_preserve_origin_and_start_without_causal_data() {
+    let ui_surface = surface_ref(11, 1);
+    let adapter_surface = surface_ref(12, 2);
+    let window_surface = surface_ref(13, 3);
+    let task_id = TaskIntentId::from_u64(21);
+    let task_attempt_id = TaskIntentAttemptId::from_u64(22);
+    let service_id = ServiceId::new("search");
+
+    let system = InputProvenance::system();
+    assert_eq!(system.source(), &InputSourceId::SYSTEM);
+    assert!(matches!(system.origin(), InputOrigin::System));
+    assert_empty_causality(&system);
+
+    let ui = InputProvenance::ui(ui_surface);
+    assert_eq!(ui.source(), &InputSourceId::UI);
+    assert!(matches!(ui.origin(), InputOrigin::Ui(_)));
+    assert_eq!(ui.surface(), Some(ui_surface));
+    assert_empty_causality(&ui);
+
+    let adapter = InputProvenance::adapter(adapter_surface);
+    assert_eq!(adapter.source(), &InputSourceId::ADAPTER);
+    assert!(matches!(adapter.origin(), InputOrigin::Adapter(_)));
+    assert_eq!(adapter.surface(), Some(adapter_surface));
+    assert_empty_causality(&adapter);
+
+    let task = InputProvenance::task(task_id, task_attempt_id);
+    assert_eq!(task.source(), &InputSourceId::TASK);
+    assert!(matches!(task.origin(), InputOrigin::Task(_)));
+    assert_eq!(task.task_id(), Some(task_id));
+    assert_eq!(task.task_attempt_id(), Some(task_attempt_id));
+    assert_eq!(task.surface(), None);
+    assert_empty_causality(&task);
+
+    let service = InputProvenance::service(service_id.clone());
+    assert_eq!(service.source(), &InputSourceId::SERVICE);
+    assert!(matches!(service.origin(), InputOrigin::Service(_)));
+    assert_eq!(service.service_id(), Some(service_id));
+    assert_empty_causality(&service);
+
+    let window = InputProvenance::window(window_surface);
+    assert_eq!(window.source(), &InputSourceId::WINDOW);
+    assert!(matches!(window.origin(), InputOrigin::Window(_)));
+    assert_eq!(window.surface(), Some(window_surface));
+    assert_empty_causality(&window);
+}
+
+#[test]
+fn provenance_correlation_and_sequence_fields_set_and_clear_independently() {
+    let current = correlation(31);
+    let parent = correlation(32);
+    let provenance =
+        InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1))
+            .with_correlation(current)
+            .with_parent_correlation(parent)
+            .with_sequence(7);
+
+    assert_eq!(provenance.correlation(), Correlation::Present(current));
+    assert_eq!(
+        provenance.parent_correlation(),
+        Correlation::Present(parent)
+    );
+    assert_eq!(provenance.sequence(), Some(7));
+    assert_eq!(
+        provenance.clone().with_correlation(current),
+        provenance.clone(),
+        "repeating the current correlation must be idempotent"
+    );
+    assert_eq!(
+        provenance.clone().with_parent_correlation(parent),
+        provenance.clone(),
+        "repeating the parent correlation must be idempotent"
+    );
+
+    let without_current = provenance.clone().without_correlation();
+    assert_eq!(without_current.correlation(), Correlation::Absent);
+    assert_eq!(
+        without_current.parent_correlation(),
+        Correlation::Present(parent)
+    );
+    assert_eq!(without_current.sequence(), Some(7));
+
+    let without_parent = provenance.clone().without_parent_correlation();
+    assert_eq!(without_parent.correlation(), Correlation::Present(current));
+    assert_eq!(without_parent.parent_correlation(), Correlation::Absent);
+    assert_eq!(without_parent.sequence(), Some(7));
+
+    let without_sequence = provenance.without_sequence();
+    assert_eq!(
+        without_sequence.correlation(),
+        Correlation::Present(current)
+    );
+    assert_eq!(
+        without_sequence.parent_correlation(),
+        Correlation::Present(parent)
+    );
+    assert_eq!(without_sequence.sequence(), None);
+}
+
+#[test]
+fn provenance_surface_attachment_is_generation_qualified_and_origin_safe() {
+    let first = surface_ref(41, 1);
+    let replacement = surface_ref(41, 2);
+    let task = InputProvenance::task(TaskIntentId::from_u64(4), TaskIntentAttemptId::from_u64(5));
+    let attached = task.clone().try_with_surface(first).unwrap();
+    assert_eq!(attached.surface(), Some(first));
+    assert_eq!(
+        attached.clone().try_with_surface(first),
+        Ok(attached.clone())
+    );
+
+    assert_surface_error(
+        attached.clone().try_with_surface(replacement).unwrap_err(),
+        ProvenanceErrorCode::SurfaceAlreadyAttached,
+        attached.origin(),
+        Some(first),
+        replacement,
+    );
+    assert_eq!(attached.surface(), Some(first));
+
+    for provenance in [
+        InputProvenance::ui(first),
+        InputProvenance::adapter(first),
+        InputProvenance::window(first),
+    ] {
+        assert_eq!(
+            provenance.clone().try_with_surface(first),
+            Ok(provenance.clone())
+        );
+        assert_surface_error(
+            provenance
+                .clone()
+                .try_with_surface(replacement)
+                .unwrap_err(),
+            ProvenanceErrorCode::SurfaceOverwriteUnsupported,
+            provenance.origin(),
+            Some(first),
+            replacement,
+        );
+        assert_eq!(provenance.surface(), Some(first));
+    }
+
+    for provenance in [
+        InputProvenance::system(),
+        InputProvenance::service(ServiceId::new("sync")),
+    ] {
+        assert_surface_error(
+            provenance.clone().try_with_surface(first).unwrap_err(),
+            ProvenanceErrorCode::SurfaceUnsupportedOrigin,
+            provenance.origin(),
+            None,
+            first,
+        );
+        assert_eq!(provenance.surface(), None);
+    }
 }
 
 #[test]
@@ -1617,7 +1814,7 @@ fn diagnostics_keep_recent_entries_and_counters() {
     log.push(Diagnostic::warning(
         DiagnosticCode::UNKNOWN_RETAINED_COMMAND,
         "missing binding",
-        InputProvenance::ui(SurfaceId::from_u64(1)),
+        InputProvenance::ui(surface_ref(1, 0)),
     ));
     log.push(
         Diagnostic::error(
@@ -1819,7 +2016,7 @@ fn runtime_reports_task_intents_without_executing_them() {
     runtime.enqueue_ui(
         UiInput::new(
             CounterInput::StartTask,
-            InputProvenance::ui(SurfaceId::from_u64(1)),
+            InputProvenance::ui(surface_ref(1, 0)),
         )
         .unwrap(),
     );
@@ -1848,7 +2045,7 @@ fn runtime_drains_ui_before_task_events_and_respects_budget() {
     runtime.enqueue_ui(
         UiInput::new(
             CounterInput::Increment,
-            InputProvenance::ui(SurfaceId::from_u64(1)),
+            InputProvenance::ui(surface_ref(1, 0)),
         )
         .unwrap(),
     );
@@ -2175,7 +2372,7 @@ fn service_effects_expose_typed_payloads_and_kinds() {
         ServiceId::new("jsonrpc"),
         ServiceCommandName::new("textDocument/hover"),
         ServiceCommandPayload::from_json_text(r#"{"line":3}"#),
-        CorrelationId::from_u64(42),
+        correlation(42),
     );
     assert_eq!(call.kind(), &EffectKindId::CALL_SERVICE);
     assert!(matches!(
@@ -2184,7 +2381,7 @@ fn service_effects_expose_typed_payloads_and_kinds() {
             if effect.id() == &ServiceId::new("jsonrpc")
                 && effect.command().as_str() == "textDocument/hover"
                 && effect.payload().as_json_text() == r#"{"line":3}"#
-                && effect.correlation() == CorrelationId::from_u64(42)
+                && effect.correlation() == correlation(42)
     ));
 
     let diagnostic = Diagnostic::warning(
