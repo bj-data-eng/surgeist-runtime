@@ -97,20 +97,20 @@ Intended commit: `feat: make input provenance explicit`.
 
 ### C04-T02 - Immutable Reducer Commit Model
 
-Files/area: `src/reducer.rs`, checked `StateVersion` support in `src/snapshot.rs`,
-C04 reducer reexports in `src/lib.rs`, and reducer/version-focused tests.
+Files/area: `src/reducer.rs`, checked `StateVersion` in `src/snapshot.rs`, minimal
+direct-result plumbing in `src/runtime.rs`, `src/lib.rs` reexports, focused tests.
 
-Intended behavior: implement immutable-state `Reducer`, explicit successful
-`ReducerCommit`/`ReducerChange`, disjoint `ReducerFailure`, complete constructors/
-accessors, and checked state-version progression. Do not integrate Runtime yet.
+Intended behavior: define immutable `Reducer`, explicit commit/change, disjoint
+failure, complete accessors, and checked `StateVersion`. Adapt Runtime only to
+consume the new result; T04 owns atomic overflow/effect/redraw semantics.
 
-RED evidence: first add tests proving failure cannot contain state/effects,
-successful empty/effectful commits and provenance, immutable input state, and
-checked StateVersion overflow; record compile/assertion failure.
+RED evidence: first prove failure excludes state/effects, successful commit shapes/
+provenance/order, immutable state, checked version overflow, and unchanged runtime
+state/effect behavior through the new result; record compile/assertion failure.
 
-Acceptance: partial mutate-then-fail is unrepresentable; every success carries an
-explicit commit; failure carries only message/provenance; builders preserve effect
-order; checked overflow is typed and leaves the original version unchanged.
+Acceptance: mutate-then-fail is unrepresentable; successes carry commits; failure
+has only message/provenance; overflow is typed/atomic; direct Runtime plumbing
+preserves current behavior and implements no T04 transaction semantics.
 
 Commands: `cargo test --offline --locked -p surgeist-runtime`; `cargo test
 --offline --locked -p surgeist-runtime --doc`; `cargo clippy --offline --locked
@@ -191,7 +191,7 @@ After all tasks are `TASK_CLEAN`, make the status-only `complete` commit and run
 `cargo fmt --check`; `git ls-files -co --exclude-standard -- '*.rs'`;
 `! rg -n --pcre2 '#\s*\[\s*(?:unsafe\s*\(|no_mangle\b|export_name\b)|\bunsafe\s*(?:\{|fn\b|trait\b|impl\b|extern\b)|\bstatic\s+mut\b|\bextern\s*(?:"[^"]*")?\s*\{' $(git ls-files -co --exclude-standard -- '*.rs')`;
 `! rg -n 'surgeist_(retained|window|task)|surgeist-(retained|window|task)' Cargo.toml src`;
-`! rg -n 'schedule_timer|window_command|executed_effects|state: &mut State' src`.
+`! rg -n 'schedule_timer|window_command' src/effect.rs src/lib.rs src/runtime.rs`; `! rg -n 'executed_effects' src`; `! rg -n -U --pcre2 'fn\s+reduce\s*\(\s*&\s*(?:\x27[A-Za-z_][A-Za-z0-9_]*\s+)?mut\s+self\s*,\s*[^:,]+:\s*&\s*(?:\x27[A-Za-z_][A-Za-z0-9_]*\s+)?mut\b' src`.
 
 Metadata must retain Rust `1.89`, no dependencies, and default-only features.
 Run the complete final set before holistic review, after CLEAN review at the exact
