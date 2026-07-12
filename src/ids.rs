@@ -80,6 +80,10 @@ impl ResourceGeneration {
 pub struct ResourceOperationId(NonZeroU64);
 
 impl ResourceOperationId {
+    pub(crate) const fn new(value: NonZeroU64) -> Self {
+        Self(value)
+    }
+
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0.get()

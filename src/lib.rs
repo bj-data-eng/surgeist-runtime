@@ -64,8 +64,8 @@ pub use provenance::{
 pub use proxy::{AppProxy, AppProxyError, AppProxyErrorCode, ProxyInput, QueuePolicy, WakeBridge};
 pub use reducer::{Reducer, ReducerResult};
 pub use resource::{
-    FailureVisibility, Freshness, ResourceSnapshot, ResourceState, ResourceStateReadyTransition,
-    ResourceStatus,
+    FailureVisibility, Freshness, ResourceOperation, ResourceSnapshot, ResourceState,
+    ResourceStateError, ResourceStateErrorCode, ResourceStatus,
 };
 pub use runtime::{
     Runtime, RuntimeBudget, RuntimeDrainError, RuntimeDrainReport, RuntimeInputError, RuntimeLane,

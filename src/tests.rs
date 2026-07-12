@@ -987,40 +987,47 @@ fn service_effects_expose_typed_payloads_and_kinds() {
 
 #[test]
 fn resource_state_tracks_freshness_and_refreshing_independently() {
-    let mut resource = ResourceState::<u32, String>::idle(ResourceId::new("thumb:1"));
+    let mut resource = ResourceState::<u32, String>::new(ResourceId::new("thumb:1"));
 
-    resource.starting();
-    assert_eq!(resource.status(), ResourceStatus::Starting);
+    let load = resource.begin_load().unwrap();
+    assert_eq!(resource.status(), ResourceStatus::Loading);
     assert!(!resource.is_renderable());
 
-    resource.ready(7, Freshness::Fresh);
+    resource.ready(&load, 7).unwrap();
     assert_eq!(resource.status(), ResourceStatus::Ready);
     assert_eq!(resource.value(), Some(&7));
     assert!(resource.is_renderable());
     assert_eq!(resource.freshness(), Freshness::Fresh);
 
-    resource.refreshing();
+    let refresh = resource.begin_refresh().unwrap();
     assert_eq!(resource.status(), ResourceStatus::Refreshing);
     assert_eq!(resource.value(), Some(&7));
     assert!(resource.is_renderable());
 
-    resource.mark_stale("source changed");
-    assert_eq!(resource.freshness(), Freshness::Stale);
-    assert_eq!(resource.stale_reason(), Some("source changed"));
+    resource.ready(&refresh, 8).unwrap();
+    assert_eq!(resource.value(), Some(&8));
 }
 
 #[test]
 fn resource_failure_preserves_renderable_stale_value() {
-    let mut resource =
-        ResourceState::<u32, String>::ready(ResourceId::new("query:1"), 10, Freshness::Fresh);
+    let mut resource = ResourceState::<u32, String>::new(ResourceId::new("query:1"));
+    let load = resource.begin_load().unwrap();
+    resource.ready(&load, 10).unwrap();
 
-    resource.refreshing();
-    resource.failed("timeout".to_string(), FailureVisibility::KeepStaleValue);
+    let refresh = resource.begin_refresh().unwrap();
+    resource
+        .failed(
+            &refresh,
+            "timeout".to_string(),
+            FailureVisibility::KeepStaleValue,
+        )
+        .unwrap();
 
     assert_eq!(resource.status(), ResourceStatus::Failed);
     assert_eq!(resource.value(), Some(&10));
     assert_eq!(resource.error(), Some(&"timeout".to_string()));
     assert!(resource.is_renderable());
+    assert_eq!(resource.freshness(), Freshness::Stale);
 }
 
 #[test]
