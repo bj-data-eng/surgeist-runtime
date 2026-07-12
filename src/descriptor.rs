@@ -1,6 +1,6 @@
 use super::{
-    AppId, AppScope, CommandDescriptor, EventDescriptor, ResourceId, RootId, SnapshotBinding,
-    TaskIntentName,
+    AppId, AppScope, CommandDescriptor, EventDescriptor, NameError, PayloadTypeName, ResourceId,
+    RootId, SnapshotBinding, TaskIntentName,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,49 +166,61 @@ impl RootDescriptor {
     }
 }
 
+/// Declares an abstract task intent and its semantic input type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskDescriptor {
     name: TaskIntentName,
-    input_type: &'static str,
+    input_type: PayloadTypeName,
 }
 
 impl TaskDescriptor {
-    #[must_use]
-    pub const fn new(name: TaskIntentName, input_type: &'static str) -> Self {
-        Self { name, input_type }
+    /// Creates a task descriptor after validating its semantic input type.
+    pub fn try_new(name: TaskIntentName, input_type: impl Into<String>) -> Result<Self, NameError> {
+        Ok(Self {
+            name,
+            input_type: PayloadTypeName::try_new_for_field(input_type, "task.input_type")?,
+        })
     }
 
+    /// Returns the abstract task intent name.
     #[must_use]
     pub fn name(&self) -> &TaskIntentName {
         &self.name
     }
 
+    /// Returns the semantic input type name.
     #[must_use]
-    pub const fn input_type(&self) -> &'static str {
-        self.input_type
+    pub fn input_type(&self) -> &PayloadTypeName {
+        &self.input_type
     }
 }
 
+/// Declares a resource and its semantic value type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceDescriptor {
     id: ResourceId,
-    value_type: &'static str,
+    value_type: PayloadTypeName,
 }
 
 impl ResourceDescriptor {
-    #[must_use]
-    pub const fn new(id: ResourceId, value_type: &'static str) -> Self {
-        Self { id, value_type }
+    /// Creates a resource descriptor after validating its semantic value type.
+    pub fn try_new(id: ResourceId, value_type: impl Into<String>) -> Result<Self, NameError> {
+        Ok(Self {
+            id,
+            value_type: PayloadTypeName::try_new_for_field(value_type, "resource.value_type")?,
+        })
     }
 
+    /// Returns the resource identifier.
     #[must_use]
     pub fn id(&self) -> &ResourceId {
         &self.id
     }
 
+    /// Returns the semantic value type name.
     #[must_use]
-    pub const fn value_type(&self) -> &'static str {
-        self.value_type
+    pub fn value_type(&self) -> &PayloadTypeName {
+        &self.value_type
     }
 }
 

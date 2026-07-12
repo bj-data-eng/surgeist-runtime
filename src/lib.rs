@@ -31,7 +31,7 @@ mod testing;
 #[cfg(test)]
 mod tests;
 
-pub use command::{AppCommand, CommandDescriptor, CommandName};
+pub use command::{AppCommand, CommandDescriptor, CommandName, NameError, PayloadTypeName};
 pub use coord::{
     AppScope, CoordinationState, ScopePathSegment, Subscription, SubscriptionAggregate,
     SubscriptionChange, SubscriptionError, SubscriptionErrorCode, SubscriptionKey,

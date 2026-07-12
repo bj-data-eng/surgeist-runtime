@@ -1623,10 +1623,100 @@ fn reprioritize_task_effect_carries_runtime_task_intent_handle_and_priority_hint
 
 #[test]
 fn task_descriptor_names_abstract_runtime_intents() {
-    let descriptor = TaskDescriptor::new(TaskIntentName::new("search"), "SearchInput");
+    let descriptor = TaskDescriptor::try_new(TaskIntentName::new("search"), "SearchInput").unwrap();
 
     assert_eq!(descriptor.name().as_str(), "search");
-    assert_eq!(descriptor.input_type(), "SearchInput");
+    assert_eq!(descriptor.input_type().as_str(), "SearchInput");
+}
+
+#[test]
+fn descriptor_payload_type_names_are_validated() {
+    for value in ["", "   ", "invalid\u{001f}name"] {
+        assert_name_error(
+            CommandName::try_new(value).unwrap_err(),
+            "command.name",
+            value,
+        );
+        assert_name_error(EventName::try_new(value).unwrap_err(), "event.name", value);
+        assert_name_error(
+            PayloadTypeName::try_new(value).unwrap_err(),
+            "payload_type",
+            value,
+        );
+
+        assert_name_error(
+            CommandDescriptor::try_new(value, "Payload").unwrap_err(),
+            "command.name",
+            value,
+        );
+        assert_name_error(
+            CommandDescriptor::try_new("command", value).unwrap_err(),
+            "command.payload_type",
+            value,
+        );
+        assert_name_error(
+            EventDescriptor::try_new(value, "Payload").unwrap_err(),
+            "event.name",
+            value,
+        );
+        assert_name_error(
+            EventDescriptor::try_new("event", value).unwrap_err(),
+            "event.payload_type",
+            value,
+        );
+        assert_name_error(
+            TaskDescriptor::try_new(TaskIntentName::new("task"), value).unwrap_err(),
+            "task.input_type",
+            value,
+        );
+        assert_name_error(
+            ResourceDescriptor::try_new(ResourceId::new("resource"), value).unwrap_err(),
+            "resource.value_type",
+            value,
+        );
+    }
+
+    let command_name = CommandName::try_new(" command ").unwrap();
+    let event_name = EventName::try_new(" event ").unwrap();
+    let payload_type = PayloadTypeName::try_new(" Payload ").unwrap();
+    assert_eq!(command_name.as_str(), " command ");
+    assert_eq!(event_name.as_str(), " event ");
+    assert_eq!(payload_type.as_str(), " Payload ");
+
+    let command = CommandDescriptor::try_new("command", "CommandPayload").unwrap();
+    let event = EventDescriptor::try_new("event", "EventPayload").unwrap();
+    let task = TaskDescriptor::try_new(TaskIntentName::new("task"), "TaskInput").unwrap();
+    let resource =
+        ResourceDescriptor::try_new(ResourceId::new("resource"), "ResourceValue").unwrap();
+    assert_eq!(command.name().as_str(), "command");
+    assert_eq!(command.payload_type().as_str(), "CommandPayload");
+    assert_eq!(event.name().as_str(), "event");
+    assert_eq!(event.payload_type().as_str(), "EventPayload");
+    assert_eq!(task.name().as_str(), "task");
+    assert_eq!(task.input_type().as_str(), "TaskInput");
+    assert_eq!(resource.id().as_str(), "resource");
+    assert_eq!(resource.value_type().as_str(), "ResourceValue");
+
+    let error = CommandDescriptor::try_new("command", "\u{001f}").unwrap_err();
+    let _: &dyn Error = &error;
+    assert!(format!("{error}").contains("command.payload_type"));
+}
+
+fn assert_name_error(error: NameError, field: &str, value: &str) {
+    assert_eq!(error.field(), field);
+    assert_eq!(error.value(), value);
+}
+
+#[test]
+fn descriptor_names_have_no_unchecked_public_constructors() {
+    for source in [include_str!("command.rs"), include_str!("event.rs")] {
+        assert!(!source.contains("pub fn new(value: impl Into<String>) -> Self"));
+        assert!(!source.contains("pub fn named(name: impl Into<String>) -> Self"));
+    }
+    assert!(!include_str!("command.rs").contains("pub fn new(name: impl Into<String>"));
+    assert!(!include_str!("event.rs").contains("pub fn new(name: impl Into<String>"));
+    assert!(!include_str!("descriptor.rs").contains("pub const fn new(name: TaskIntentName"));
+    assert!(!include_str!("descriptor.rs").contains("pub const fn new(id: ResourceId"));
 }
 
 #[test]
