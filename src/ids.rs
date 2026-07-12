@@ -190,6 +190,7 @@ checked_generation!(SurfaceInvalidationGeneration);
 checked_generation!(ResourceGeneration);
 
 impl Default for AppId {
+    /// Returns the application identifier with exact text `"app"`.
     fn default() -> Self {
         Self::new("app")
     }

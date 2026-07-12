@@ -147,6 +147,8 @@ const DEFAULT_SERVICE_QUEUE_CAPACITY: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Immutable capacity limits for the UI, task, and service runtime queues.
+///
+/// [`Default::default`] sets each lane capacity to `65_536`.
 pub struct RuntimeQueuePolicy {
     ui_capacity: usize,
     task_capacity: usize,
@@ -1261,6 +1263,10 @@ impl Default for RuntimeBudget {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 /// The committed work and effect disposition from one successful runtime drain.
+///
+/// [`Default::default`] has zero counters and pending counts, `false` for
+/// [`Self::has_pending_inputs`], no [`Self::first_drained_lane`], and empty
+/// redraw requests, intents, and effect outcomes.
 pub struct RuntimeDrainReport {
     drained_inputs: usize,
     applied_effects: usize,
@@ -1535,6 +1541,9 @@ impl DrainOverflow {
 }
 
 impl Default for Runtime<(), (), ()> {
+    /// Returns [`Runtime::new((), ())`]: initial state version; empty queues,
+    /// surface registry, diagnostics, and coordination state; the default queue
+    /// policy; and UI as the initial drain scheduling lane.
     fn default() -> Self {
         Self::new((), ())
     }

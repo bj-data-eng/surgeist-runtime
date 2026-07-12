@@ -440,9 +440,23 @@ impl SurfaceMutation {
 
 /// The current runtime lifecycle phase of a surface.
 ///
-/// Transitions are validated by [`UiSurface::transition_to`]. Only `Ready` and
-/// `Resized` surfaces may render; `Closing`, `Closed`, and `Destroyed` reject
-/// local mutation, targeting, invalidation, and rendering operations.
+/// The closed successor matrix is:
+///
+/// - `Created` -> `Ready`, `Closing`, `Closed`, `Destroyed`
+/// - `Ready` -> `Resized`, `Hidden`, `Occluded`, `Suspended`, `Closing`, `Closed`, `Destroyed`
+/// - `Resized` -> `Ready`, `Hidden`, `Occluded`, `Suspended`, `Closing`, `Closed`, `Destroyed`
+/// - `Hidden` -> `Ready`, `Closing`, `Closed`, `Destroyed`
+/// - `Occluded` -> `Ready`, `Hidden`, `Suspended`, `Closing`, `Closed`, `Destroyed`
+/// - `Suspended` -> `Ready`, `Hidden`, `Closing`, `Closed`, `Destroyed`
+/// - `Closing` -> `Closed`, `Destroyed`
+/// - `Closed` -> `Destroyed`
+/// - `Destroyed` -> no successor
+///
+/// Every other transition, including a same-state replay, returns
+/// [`SurfaceErrorCode::InvalidLifecycleTransition`] and leaves the lifecycle
+/// unchanged. Only `Ready` and `Resized` surfaces may render; `Closing`,
+/// `Closed`, and `Destroyed` reject local mutation, targeting, invalidation,
+/// and rendering operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SurfaceLifecycle {
     /// Newly constructed and not yet ready to render.
@@ -546,7 +560,7 @@ impl SurfaceInvalidation {
 pub enum SurfaceInvalidationKind {
     /// A root replacement created a new [`SurfaceGeneration`].
     RootReplaced {
-        /// Associated data carried by this public contract.
+        /// The new [`SurfaceGeneration`] assigned by the root replacement and carried by this invalidation.
         surface_generation: SurfaceGeneration,
     },
     /// A newer application state snapshot is available for rendering.
@@ -915,9 +929,17 @@ impl UiSurface {
 
     /// Moves the surface to an allowed lifecycle phase.
     ///
-    /// The transition matrix is closed: every transition not listed by
-    /// [`SurfaceLifecycle`] is rejected with
-    /// [`SurfaceErrorCode::InvalidLifecycleTransition`] without changing state.
+    /// The closed successor matrix is: `Created` -> `Ready`, `Closing`, `Closed`,
+    /// `Destroyed`; `Ready` -> `Resized`, `Hidden`, `Occluded`, `Suspended`,
+    /// `Closing`, `Closed`, `Destroyed`; `Resized` -> `Ready`, `Hidden`,
+    /// `Occluded`, `Suspended`, `Closing`, `Closed`, `Destroyed`; `Hidden` ->
+    /// `Ready`, `Closing`, `Closed`, `Destroyed`; `Occluded` -> `Ready`, `Hidden`,
+    /// `Suspended`, `Closing`, `Closed`, `Destroyed`; `Suspended` -> `Ready`,
+    /// `Hidden`, `Closing`, `Closed`, `Destroyed`; `Closing` -> `Closed`,
+    /// `Destroyed`; `Closed` -> `Destroyed`; and `Destroyed` -> no successor.
+    /// Every other transition, including a same-state replay, returns
+    /// [`SurfaceErrorCode::InvalidLifecycleTransition`] and leaves the lifecycle
+    /// unchanged.
     pub fn transition_to(
         &mut self,
         next: SurfaceLifecycle,

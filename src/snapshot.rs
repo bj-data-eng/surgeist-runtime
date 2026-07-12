@@ -6,6 +6,8 @@ use crate::{
 };
 
 /// A monotonically increasing version of application state.
+///
+/// [`Default::default`] equals [`Self::initial`], whose numeric value is zero.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct StateVersion(u64);
 
