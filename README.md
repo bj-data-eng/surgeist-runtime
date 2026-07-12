@@ -17,7 +17,8 @@ tree, and host implementation details out of this crate.
 Run these before handing off crate-local runtime work:
 
 ```sh
+cargo check -p surgeist-runtime
 cargo test -p surgeist-runtime
-cargo clippy -p surgeist-runtime --all-targets -- -D warnings
+cargo clippy -p surgeist-runtime --all-targets -- -F unsafe-code -D warnings
 cargo fmt --check
 ```

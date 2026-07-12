@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! App runtime and authoring DSL boundary for Surgeist.
 //!
 //! This module coordinates deterministic app state, retained UI surfaces,

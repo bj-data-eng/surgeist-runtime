@@ -69,6 +69,30 @@ fn app_loop_has_no_host_handler_or_native_loop() {
 }
 
 #[test]
+fn manifest_declares_root_msrv_1_89() {
+    let manifest = include_str!("../Cargo.toml");
+
+    assert!(
+        manifest
+            .lines()
+            .any(|line| line == "rust-version = \"1.89\""),
+        "runtime manifest must declare the root Rust 1.89 MSRV"
+    );
+}
+
+#[test]
+fn crate_forbids_unsafe_code() {
+    let crate_root = include_str!("lib.rs");
+
+    assert!(
+        crate_root
+            .lines()
+            .any(|line| line == "#![forbid(unsafe_code)]"),
+        "runtime crate root must forbid unsafe code"
+    );
+}
+
+#[test]
 fn typed_ids_are_stable_and_debuggable() {
     assert_eq!(AppId::new("photo.lab").as_str(), "photo.lab");
     assert_eq!(SurfaceId::from_u64(7).as_u64(), 7);
