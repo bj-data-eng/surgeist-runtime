@@ -10,7 +10,7 @@ Cycle base: `e2fb9ea48bd2e47005fa09b519986dca6d233711`
 
 Reviewed specification: `plans/specs/runtime-review-findings-resolution.md` at
 normalized SHA-256
-`b7876239cca9dbc12ccac157a897acb9284e9ee726c22c06e672f05277ee4c40`.
+`060185a41f9b7f1505bb7db7717a52acbe983c6a1f22f637b528d7e478a1af11`.
 
 Applicable specification sections: S1 `command.rs`/`event.rs`, `descriptor.rs`, and
 `snapshot.rs` export rows; S11; S12 public errors/docs/examples and final unsafe/MSRV
@@ -18,16 +18,16 @@ verification; S14 remaining and integrated coverage; S15.
 
 Reviewed sequence: `plans/sequences/runtime-review-findings-resolution.md` at
 normalized SHA-256
-`18508f7cb08b4577ffc13fc264948199c652f0aaa12a0b449b80dcd6a6d7a251`, entry
+`67393b975028cde627e495468925f050f1e16f7b7441e0a2af2f769429b72610`, entry
 `C06 - Manifest, Snapshot, Documentation, And Initiative Closure`.
 
-Bounded outcome: make authored manifests and snapshot payloads cross a validated,
-typed boundary, complete the final public error/documentation contract, and prove
-the finite initiative acceptance checklist against the integrated crate.
+Bounded outcome: make authored manifests and snapshots cross a validated boundary,
+align the leaf to root-authorized Rust `1.97`, complete the public error/docs
+contract, and prove the finite initiative checklist against the integrated crate.
 
 ## Boundary
 
-In scope: validated command/event/payload names, descriptor construction, manifest
+In scope: leaf MSRV metadata, validated names/descriptors, manifest
 validation/indexes and `App` ownership, manifest-bound snapshot construction and
 entries, exact C06-owned reexports, all remaining public error traits/accessors and
 non-exhaustive classifications, missing Rustdoc, representative compile-checked
@@ -39,8 +39,9 @@ host wake bridges; root or sibling writes/messages; and redesign of C01-C05 beha
 
 Root communication remains on hold. Retain the final candidate SHA, API/dependency
 delta, verification evidence, and root adapter/`WakeBridge` obligations locally.
-Each implementation task uses a fresh clean-context worker and task reviewer; the
-canonical final holistic and publication gates remain applicable.
+Each task uses a fresh worker who stops after one logical commit and returns exact
+RED/GREEN/span evidence without review, later tasks, finalization, landing, or
+publication; a fresh task reviewer and the canonical final gates remain required.
 
 ## Baseline Evidence
 
@@ -49,11 +50,11 @@ canonical final holistic and publication gates remain applicable.
 - `CommandName`, `EventName`, descriptor payload strings, manifest append methods,
   and snapshot text are currently unchecked; `App` stores only `AppDescriptor`.
 - `AppSnapshot::new` has no root/declaration binding or value-entry path.
-- The crate already forbids unsafe and declares Rust `1.89`, but lacks
+- The C06 base forbids unsafe and declares historical Rust `1.89`, but lacks
   `#![warn(missing_docs)]`, the S12 representative doctests, and standard behavior
   for every named public error.
-- Root Rust `1.89` is not installed locally and will not be acquired; existing
-  offline tooling plus metadata and source review provide the configured evidence.
+- During T05, root authority and installed `rustc` advanced to `1.97.0`; the user
+  authorized leaf alignment, with no acquisition or root mutation by this cycle.
 
 ## Impacts
 
@@ -62,7 +63,7 @@ canonical final holistic and publication gates remain applicable.
 - Dependencies/features/artifacts: unchanged; generated API artifacts stay root-owned.
 - Docs/examples: complete all exported-item Rustdoc, six S12 public doctest contracts,
   and one concise README ownership example.
-- MSRV/unsafe: retain Rust `1.89`, reject post-1.89 contracts, keep
+- MSRV/unsafe: advance `rust-version` to `1.97`, reject post-1.97 contracts, keep
   `#![forbid(unsafe_code)]`, and add the missing-doc lint.
 - Root: retain facade/adapter and concrete deferred-wake test obligations locally;
   send no message.
@@ -145,7 +146,7 @@ changing unrelated C01-C05 semantics.
 with warnings denied to expose missing items; record expected failures before fixes.
 - Acceptance: the exact S12 error list satisfies `Display`/`Error`; all error-semantic
 enums are non-exhaustive; no broad lint allowance is added; warnings-denied docs and
-strict Clippy pass under the Rust `1.89` contract.
+strict Clippy pass under the Rust `1.97` contract.
 - Commands: `cargo test --offline --locked -p surgeist-runtime`; `RUSTDOCFLAGS="-D
 warnings" cargo doc --offline --locked -p surgeist-runtime --no-deps`; `cargo clippy
 --offline --locked -p surgeist-runtime --all-targets -- -F unsafe-code -D warnings`;
@@ -155,19 +156,19 @@ warnings" cargo doc --offline --locked -p surgeist-runtime --no-deps`; `cargo cl
 
 ### C06-T05 - Compile Public Examples And Prove Initiative Acceptance
 
-- Files/area: representative public Rustdoc in `src/*.rs`, `README.md`, exact
-`src/lib.rs` front door, integrated `src/tests.rs`, and final source/manifest audits.
+- Files/area: `Cargo.toml`, representative Rustdoc in `src/*.rs`, `README.md`, exact
+`src/lib.rs`, integrated `src/tests.rs`, and final source/manifest audits.
 - Intended behavior: add all six S12 public-only success/error doctest contracts and
-the README abstract task/resource/service intent ownership example. Close every
-remaining S14 test or documented equivalent and audit each original finding against
-implemented behavior, focused tests, docs, exact S1 exports, MSRV, and boundaries.
-- RED evidence: first add the representative examples/tests against public front doors,
-including exact C06 exports and integrated acceptance assertions; record the expected
-compile/behavior failures before completing docs or narrowly fixing exposed gaps.
+the README ownership example, advance leaf MSRV/test evidence to `1.97`, close every
+S14 equivalent, and audit each finding against behavior, tests, docs, exports, and
+boundaries.
+- RED evidence: record the absent six-doctest baseline; first update the focused MSRV
+test to `1.97` and prove it fails against the `1.89` manifest before changing metadata.
 - Acceptance: all six example categories compile and assert their specified success or
-error path; README assigns concrete lowering to root; every finite S14/S15 item has
-passing evidence; no root/sibling implementation or production test helper leaks in.
-- Commands: `cargo test --offline --locked -p surgeist-runtime`; `cargo test
+error path; README assigns concrete lowering to root; metadata/compiler report `1.97`;
+every S14/S15 item passes; no root/sibling implementation or test helper leaks in.
+- Commands: `rustc --version --verbose`; `cargo metadata --offline --locked --no-deps
+--format-version 1`; `cargo test --offline --locked -p surgeist-runtime`; `cargo test
 --offline --locked -p surgeist-runtime --doc`; `RUSTDOCFLAGS="-D warnings" cargo doc
 --offline --locked -p surgeist-runtime --no-deps`; `cargo clippy --offline --locked
 -p surgeist-runtime --all-targets -- -F unsafe-code -D warnings`; `cargo fmt --check`.
@@ -177,6 +178,7 @@ passing evidence; no root/sibling implementation or production test helper leaks
 ## Completion
 
 After all tasks are `TASK_CLEAN`, make the status-only `complete` commit and run:
+`rustc --version --verbose`;
 `cargo metadata --offline --locked --no-deps --format-version 1`;
 `cargo check --offline --locked -p surgeist-runtime`;
 `cargo test --offline --locked -p surgeist-runtime`;
@@ -188,9 +190,9 @@ After all tasks are `TASK_CLEAN`, make the status-only `complete` commit and run
 `! rg -n 'surgeist_(retained|window|task)|surgeist-(retained|window|task)' Cargo.toml src`;
 `! rg -n '#!?\[(?:allow|expect)\([^]]*(?:unsafe_code|missing_docs)' src`.
 
-Metadata must retain Rust `1.89`, no dependencies, and default-only features. Run
-the complete final set before holistic review, after CLEAN review at the exact head,
-and after landing on local `main`. Publish/read back the immutable C06 candidate,
-retain final and root-owned handoff evidence locally, send no root message, then run
-one fresh clean-context holistic review of the complete C01-C06 initiative. Only a
-clean overall review and matching local/tracking/remote `main` complete the goal.
+Compiler/metadata must report Rust `1.97`, no dependencies, and default-only features.
+Run the final set, obtain a fresh holistic `CLEAN` review of exact
+`cycle_base..cycle_head`, rerun the set at that reviewed head and on local `main`, then
+publish/read back C06. Retain root evidence locally and send no message. Finally run
+the user's additional clean-context C01-C06 initiative acceptance review; it does not
+replace C06's canonical holistic gate. Both reviews and matching main refs complete the goal.

@@ -3,7 +3,7 @@
 Specification: `plans/specs/runtime-review-findings-resolution.md`
 
 Reviewed specification revision (normalized SHA-256):
-`b7876239cca9dbc12ccac157a897acb9284e9ee726c22c06e672f05277ee4c40`
+`060185a41f9b7f1505bb7db7717a52acbe983c6a1f22f637b528d7e478a1af11`
 
 Owning design repository: `/Users/codex/Development/surgeist-runtime`
 
@@ -30,7 +30,8 @@ S2 except registry-dependent `Runtime` methods; S12 unsafe and MSRV clauses; S13
 `UiSurface`-local generation/invalidation overflow; S14 C01 acceptance coverage.
 
 Prerequisites: the cited specification revision is clean; leaf `main` is the
-reviewed baseline; root MSRV evidence remains Rust `1.89`.
+reviewed baseline; C01's published root MSRV evidence was Rust `1.89`, while C06
+owns the later user-authorized alignment to root's current Rust `1.97` authority.
 
 Entry state: sibling crates still supply concrete UI types and adapters, fixtures
 are production-visible, and the runtime-owned local surface model is incomplete.
@@ -172,8 +173,8 @@ continuation wake failure; the verified SHA becomes C06's base.
 Owning repository: `/Users/codex/Development/surgeist-runtime`
 
 Bounded outcome: enforce validated descriptors and root-bound snapshots, complete
-public errors and compile-checked documentation for the final API, and close every
-initiative acceptance condition.
+public errors and compile-checked documentation, align the final candidate to the
+root-authorized Rust `1.97` MSRV, and close every initiative acceptance condition.
 
 Specification sections: S1 `command.rs`/`event.rs`, `descriptor.rs`, and
 `snapshot.rs` export rows; S11; S12 public-error/docs/examples and final
@@ -182,13 +183,14 @@ unsafe/MSRV verification; S14 remaining/integrated acceptance coverage; S15.
 Prerequisites: C01 through C05 are published and remotely verified, leaving a
 stable integrated public contract for validation and documentation.
 
-Entry state: names/manifests and snapshot bindings are not fully validated, and
-the integrated public API lacks final error, example, and acceptance closure.
+Entry state: names/manifests and snapshot bindings are not fully validated, the
+integrated API lacks final error/example closure, and the leaf still declares the
+historical Rust `1.89` MSRV while current root authority declares `1.97`.
 
 Exit evidence: `App` owns a validated manifest; snapshots reject undeclared,
 mismatched, and stale roots with typed errors; public errors/docs/examples satisfy
-S12; all S1 export allocations and the finite S15 checklist pass; the final
-reviewed candidate is remotely readable.
+S12; metadata and installed compiler report Rust `1.97`; all S1 exports and the
+finite S15 checklist pass; the final reviewed candidate is remotely readable.
 
 Completion evidence: retain the immutable final SHA, API/dependency delta,
 verification evidence, and root-owned adapter obligations locally, including

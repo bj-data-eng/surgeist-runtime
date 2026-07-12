@@ -13,10 +13,9 @@ Resolve every actionable finding in the repository review for this leaf crate.
 Allowed mutations are crate-local manifest/dependency metadata, runtime source,
 focused tests, README/check documentation, and canonical planning artifacts.
 Logical cycle commits, publication to this repository's `origin/main`, remote
-readback, and candidate handoffs are workflow outputs owned by `$surgeist-agent`.
-Root `surgeist` and sibling crate writes remain out of scope; root adaptation is
-returned as handoff after each published leaf candidate that changes facade
-integration.
+readback, and candidate-handoff evidence are workflow outputs owned by
+`$surgeist-agent`. Root `surgeist` and sibling crate writes remain out of scope;
+root adaptation evidence is retained locally until the user authorizes root contact.
 
 The crate is in progress and the user has authorized breaking runtime API
 changes. Compatibility shims are not required when they would preserve a finding.
@@ -1427,21 +1426,22 @@ forcing exhaustive-match breakage. Generic `RuntimeQueueError<T>` and
 the rejected payload satisfies `Debug`; `into_rejected` remains available without
 that bound.
 
-MSRV follows root authority. Root `Cargo.toml` at
-`a32d078bbc7b841486fcf010a1fef0c8844e5119` declares Rust `1.89`; this leaf adds
-`rust-version = "1.89"` beside edition 2024 and does not raise it. Removing sibling
-dependencies adds no MSRV exposure. Implementation and review reject standard
-library or language APIs stabilized after 1.89.
+MSRV follows root authority. Root `Cargo.toml` in the working tree based on
+`a32d078bbc7b841486fcf010a1fef0c8844e5119`, at SHA-256
+`60da9e1437a145d7e5e5a5663a3404564bcdfc91b67d98c6013a6f6b4ebcd7e0`, declares
+Rust `1.97`; the user authorized this leaf to align while root mutation remains out
+of scope. This leaf sets `rust-version = "1.97"` beside edition 2024. Removing
+sibling dependencies adds no MSRV exposure. Implementation and review reject
+standard-library or language APIs stabilized after 1.97.
 
-The configured repositories provide no dedicated exact-MSRV command. Leaf
-verification therefore requires
-`cargo metadata --offline --locked --no-deps --format-version 1` to report
-`rust_version: "1.89"`, the complete configured
-Cargo gate below, and task/holistic source review against the 1.89 API contract.
-An exact 1.89 compiler check is run only when that toolchain is already present in
-the execution environment; it is not acquired under this initiative. The crate
-candidate handoff records this policy so root integration can apply its own
-configured workspace environment without changing the leaf MSRV.
+The configured repositories provide no separate exact-MSRV command. Leaf
+verification therefore requires `rustc --version --verbose` to report installed
+Rust `1.97.0`, `cargo metadata --offline --locked --no-deps --format-version 1` to
+report `rust_version: "1.97"`, the complete configured Cargo gate below, and
+task/holistic source review against the 1.97 API contract. No toolchain is acquired
+under this initiative. Candidate evidence retains this policy locally so later root
+integration can apply its configured workspace environment without changing the
+leaf MSRV.
 
 `README.md` baseline checks include:
 
@@ -1502,7 +1502,7 @@ equivalent names documented in the cycle evidence:
 - `testing_fixtures_are_not_unconditional_public_api`
 - `app_loop_has_no_host_handler_or_native_loop`
 - `crate_forbids_unsafe_code`
-- `manifest_declares_root_msrv_1_89`
+- `manifest_declares_root_msrv_1_97`
 - `correlation_zero_is_unconstructable_and_absent_is_explicit`
 - `provenance_constructors_default_current_and_parent_correlation_absent`
 - `provenance_current_and_parent_correlations_set_and_clear_independently`
@@ -1590,11 +1590,11 @@ focused tests, and public documentation where applicable:
   provenance, queue, proxy, effect, version, and error semantics match sections
   S1 through S13;
 - all required tests in S14 or their documented equivalents pass;
-- leaf manifest metadata reports `rust-version = "1.89"` and changed source uses
-  no post-1.89 language or standard-library contract;
+- leaf manifest metadata reports `rust-version = "1.97"` and changed source uses
+  no post-1.97 language or standard-library contract;
 - README and rustdocs contain the S12 representative success/error examples, and
   the rustdoc examples pass the dedicated doctest command;
-- root-owned facade and adapter updates are reported as candidate handoff rather
-  than implemented in this leaf, including a required root integration test that
-  each concrete `WakeBridge` schedules a future turn without synchronous proxy
-  drain re-entry.
+- root-owned facade and adapter updates are retained as local candidate-handoff
+  evidence rather than implemented or messaged from this leaf, including a required
+  root integration test that each concrete `WakeBridge` schedules a future turn
+  without synchronous proxy drain re-entry.
