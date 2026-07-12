@@ -134,7 +134,9 @@ pub struct ServiceRegistration {
 
 impl ServiceRegistration {
     #[must_use]
-    /// Creates an empty mailbox for `id` with the supplied immutable policy.
+    /// Creates a registration with application scope, a 64-message
+    /// [`MailboxOverflow::RejectNewest`] mailbox with overflow observation disabled,
+    /// lazy startup, drain-then-stop shutdown, and no automatic restart.
     pub fn new(id: ServiceId) -> Self {
         Self {
             id,
@@ -147,104 +149,104 @@ impl ServiceRegistration {
     }
 
     #[must_use]
-    /// Drains every queued message in FIFO order.
+    /// Consumes this registration and replaces its application scope.
     pub fn with_scope(mut self, scope: AppScope) -> Self {
         self.scope = scope;
         self
     }
 
     #[must_use]
-    /// Returns the current number of queued messages.
+    /// Consumes this registration and replaces its immutable mailbox policy.
     pub const fn with_mailbox_policy(mut self, mailbox: MailboxPolicy) -> Self {
         self.mailbox = mailbox;
         self
     }
 
     #[must_use]
-    /// Reports whether no messages are queued.
+    /// Consumes this registration and replaces its service-startup policy.
     pub const fn with_startup(mut self, startup: ServiceStartup) -> Self {
         self.startup = startup;
         self
     }
 
     #[must_use]
-    /// Returns the number of recorded mailbox overflows.
+    /// Consumes this registration and replaces its service-shutdown policy.
     pub const fn with_shutdown(mut self, shutdown: ServiceShutdown) -> Self {
         self.shutdown = shutdown;
         self
     }
 
     #[must_use]
-    /// Returns the service that owns this mailbox.
+    /// Consumes this registration and replaces its failed-service restart policy.
     pub const fn with_restart(mut self, restart: ServiceRestart) -> Self {
         self.restart = restart;
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the identity of the service this registration describes.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the scope assigned to this service.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the immutable mailbox policy selected for this service.
     pub const fn mailbox(&self) -> &MailboxPolicy {
         &self.mailbox
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the selected startup policy by value.
     pub const fn startup(&self) -> ServiceStartup {
         self.startup
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the selected shutdown policy by value.
     pub const fn shutdown(&self) -> ServiceShutdown {
         self.shutdown
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the selected restart policy by value.
     pub const fn restart(&self) -> ServiceRestart {
         self.restart
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-/// A public runtime value with a private representation.
+/// An opaque service-command name passed unchanged to the root adapter.
 pub struct ServiceCommandName(String);
 
 impl ServiceCommandName {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores service-command text without parsing or dispatching it.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the command text for adapter-owned service dispatch.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// An opaque JSON-text payload passed unchanged to a root-owned service adapter.
 pub struct ServiceCommandPayload {
     json_text: Box<str>,
 }
 
 impl ServiceCommandPayload {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores owned JSON text without parsing or validating its schema.
     pub fn from_json_text(json_text: impl Into<String>) -> Self {
         Self {
             json_text: json_text.into().into_boxed_str(),
@@ -252,14 +254,14 @@ impl ServiceCommandPayload {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the exact JSON text supplied to the constructor.
     pub fn as_json_text(&self) -> &str {
         &self.json_text
     }
 }
 
 #[derive(Clone, Debug)]
-/// A public runtime value with a private representation.
+/// A bounded FIFO mailbox owned by one service identity.
 pub struct ServiceMailbox<T: Send + 'static> {
     id: ServiceId,
     policy: MailboxPolicy,
@@ -269,7 +271,7 @@ pub struct ServiceMailbox<T: Send + 'static> {
 
 impl<T: Send + 'static> ServiceMailbox<T> {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an empty mailbox with the supplied immutable overflow policy.
     pub fn new(id: ServiceId, policy: MailboxPolicy) -> Self {
         Self {
             id,
@@ -310,37 +312,39 @@ impl<T: Send + 'static> ServiceMailbox<T> {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Drains all queued messages in FIFO order through a borrowing iterator.
+    ///
+    /// The mailbox is empty once the returned drain is exhausted or dropped.
     pub fn drain(&mut self) -> vec_deque::Drain<'_, T> {
         self.messages.drain(..)
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the number of currently queued messages.
     pub fn len(&self) -> usize {
         self.messages.len()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns whether no messages are currently queued.
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the number of overflows observed when the policy enables counting.
     pub const fn overflow_count(&self) -> usize {
         self.overflow_count
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the identity of the service that owns this mailbox.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the immutable policy that governs this mailbox.
     pub const fn policy(&self) -> &MailboxPolicy {
         &self.policy
     }

@@ -45,7 +45,7 @@ impl App {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// Authored identity and version metadata for one application manifest.
 pub struct AppDescriptor {
     id: AppId,
     version: String,
@@ -54,7 +54,8 @@ pub struct AppDescriptor {
 
 impl AppDescriptor {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores an application identity and version, using the identity text as the
+    /// initial diagnostics namespace.
     pub fn new(id: AppId, version: impl Into<String>) -> Self {
         let diagnostics_namespace = id.as_str().to_owned();
         Self {
@@ -65,44 +66,44 @@ impl AppDescriptor {
     }
 
     #[must_use]
-    /// Appends an authored command declaration.
+    /// Borrows the application's stable identity.
     pub fn id(&self) -> &AppId {
         &self.id
     }
 
     #[must_use]
-    /// Appends an authored event declaration.
+    /// Borrows the authored application version text.
     pub fn version(&self) -> &str {
         &self.version
     }
 
     #[must_use]
-    /// Appends an authored task declaration.
+    /// Borrows the namespace used to group this application's diagnostics.
     pub fn diagnostics_namespace(&self) -> &str {
         &self.diagnostics_namespace
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-/// A public runtime value with a private representation.
+/// An opaque authored identifier for a window declaration.
 pub struct WindowDescriptorId(String);
 
 impl WindowDescriptorId {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores a window-declaration identifier without normalization.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
     #[must_use]
-    /// Appends an authored resource declaration.
+    /// Borrows the authored identifier text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// An authored window declaration and the roots it permits at startup.
 pub struct WindowDescriptor {
     id: WindowDescriptorId,
     title: String,
@@ -111,7 +112,7 @@ pub struct WindowDescriptor {
 
 impl WindowDescriptor {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates a window declaration with no allowed roots; add them with [`Self::allows_root`].
     pub fn new(id: WindowDescriptorId, title: impl Into<String>) -> Self {
         Self {
             id,
@@ -121,33 +122,33 @@ impl WindowDescriptor {
     }
 
     #[must_use]
-    /// Appends an authored window declaration.
+    /// Consumes this descriptor and appends one root identity to its allowed list.
     pub fn allows_root(mut self, id: RootId) -> Self {
         self.allowed_roots.push(id);
         self
     }
 
     #[must_use]
-    /// Appends an authored root declaration.
+    /// Borrows this window declaration's identity.
     pub fn id(&self) -> &WindowDescriptorId {
         &self.id
     }
 
     #[must_use]
-    /// Appends an authored startup window binding.
+    /// Borrows the title requested for this window.
     pub fn title(&self) -> &str {
         &self.title
     }
 
     #[must_use]
-    /// Returns the application descriptor being authored.
+    /// Borrows allowed root identities in append order.
     pub fn allowed_roots(&self) -> &[RootId] {
         &self.allowed_roots
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// An authored root declaration and its required runtime contracts.
 pub struct RootDescriptor {
     id: RootId,
     required_commands: Vec<CommandDescriptor>,
@@ -157,7 +158,7 @@ pub struct RootDescriptor {
 
 impl RootDescriptor {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates a root declaration with no command, event, or snapshot requirements.
     pub fn new(id: RootId) -> Self {
         Self {
             id,
@@ -168,46 +169,46 @@ impl RootDescriptor {
     }
 
     #[must_use]
-    /// Returns authored command declarations in append order.
+    /// Consumes this root declaration and records one required command contract.
     pub fn requires_command(mut self, descriptor: CommandDescriptor) -> Self {
         self.required_commands.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Returns authored event declarations in append order.
+    /// Consumes this root declaration and records one event contract it may emit.
     pub fn emits_event(mut self, descriptor: EventDescriptor) -> Self {
         self.required_events.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Returns authored task declarations in append order.
+    /// Consumes this root declaration and records one snapshot binding it declares.
     pub fn binds_snapshot(mut self, binding: SnapshotBinding) -> Self {
         self.snapshot_bindings.push(binding);
         self
     }
 
     #[must_use]
-    /// Returns authored resource declarations in append order.
+    /// Borrows this root's stable identity.
     pub fn id(&self) -> &RootId {
         &self.id
     }
 
     #[must_use]
-    /// Returns authored window declarations in append order.
+    /// Borrows required command declarations in append order.
     pub fn required_commands(&self) -> &[CommandDescriptor] {
         &self.required_commands
     }
 
     #[must_use]
-    /// Returns authored root declarations in append order.
+    /// Borrows declared emitted-event contracts in append order.
     pub fn required_events(&self) -> &[EventDescriptor] {
         &self.required_events
     }
 
     #[must_use]
-    /// Returns authored startup bindings in append order.
+    /// Borrows declared snapshot bindings in append order.
     pub fn snapshot_bindings(&self) -> &[SnapshotBinding] {
         &self.snapshot_bindings
     }
@@ -272,7 +273,7 @@ impl ResourceDescriptor {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// An authored association of a declared window, root, and coordination scope.
 pub struct StartupWindow {
     window_id: WindowDescriptorId,
     root_id: RootId,
@@ -281,7 +282,10 @@ pub struct StartupWindow {
 
 impl StartupWindow {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores one startup binding without validating that the manifest declares it.
+    ///
+    /// [`AppManifest::validate`] rejects unknown windows or roots and roots not
+    /// allowed by the selected window.
     pub const fn new(window_id: WindowDescriptorId, root_id: RootId, scope: AppScope) -> Self {
         Self {
             window_id,
@@ -291,19 +295,19 @@ impl StartupWindow {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the authored window declaration identity.
     pub fn window_id(&self) -> &WindowDescriptorId {
         &self.window_id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the root identity requested for that window.
     pub fn root_id(&self) -> &RootId {
         &self.root_id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the coordination scope attached to this startup binding.
     pub fn scope(&self) -> &AppScope {
         &self.scope
     }
@@ -339,98 +343,98 @@ impl AppManifest {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends a command declaration.
     pub fn command(mut self, descriptor: CommandDescriptor) -> Self {
         self.commands.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends an event declaration.
     pub fn event(mut self, descriptor: EventDescriptor) -> Self {
         self.events.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends a task declaration.
     pub fn task(mut self, descriptor: TaskDescriptor) -> Self {
         self.tasks.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends a resource declaration.
     pub fn resource(mut self, descriptor: ResourceDescriptor) -> Self {
         self.resources.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends a window declaration.
     pub fn window(mut self, descriptor: WindowDescriptor) -> Self {
         self.windows.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends a root declaration.
     pub fn root(mut self, descriptor: RootDescriptor) -> Self {
         self.roots.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this authored manifest and appends a startup window binding.
     pub fn startup_window(mut self, descriptor: StartupWindow) -> Self {
         self.startup.push(descriptor);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the authored application descriptor.
     pub fn app(&self) -> &AppDescriptor {
         &self.app
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored command declarations in append order.
     pub fn commands(&self) -> &[CommandDescriptor] {
         &self.commands
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored event declarations in append order.
     pub fn events(&self) -> &[EventDescriptor] {
         &self.events
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored task declarations in append order.
     pub fn tasks(&self) -> &[TaskDescriptor] {
         &self.tasks
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored resource declarations in append order.
     pub fn resources(&self) -> &[ResourceDescriptor] {
         &self.resources
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored window declarations in append order.
     pub fn windows(&self) -> &[WindowDescriptor] {
         &self.windows
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored root declarations in append order.
     pub fn roots(&self) -> &[RootDescriptor] {
         &self.roots
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows authored startup bindings in append order.
     pub fn startup(&self) -> &[StartupWindow] {
         &self.startup
     }

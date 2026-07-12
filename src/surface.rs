@@ -11,7 +11,7 @@ use super::{
 use crate::ids::CheckedNext;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A retained root identity and its registered event-target elements.
 pub struct SurfaceRoot {
     id: RootId,
     elements: SurfaceElements,
@@ -19,7 +19,7 @@ pub struct SurfaceRoot {
 
 impl SurfaceRoot {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates a root with no registered elements.
     pub fn new(id: RootId) -> Self {
         Self {
             id,
@@ -28,12 +28,15 @@ impl SurfaceRoot {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows this root's stable identity.
     pub const fn id(&self) -> &RootId {
         &self.id
     }
 
-    /// Performs the associated runtime operation.
+    /// Registers an element after verifying that its identity is not already present.
+    ///
+    /// A duplicate returns [`SurfaceErrorCode::DuplicateElement`] and preserves the
+    /// existing registration.
     pub fn register_element(
         &mut self,
         registration: ElementRegistration,
@@ -52,40 +55,45 @@ impl SurfaceRoot {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the root's registered elements.
     pub const fn elements(&self) -> &SurfaceElements {
         &self.elements
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// The deterministic element registry owned by a [`SurfaceRoot`].
+///
+/// [`Default::default`] creates an empty registry.
 pub struct SurfaceElements {
     registrations: BTreeMap<ElementId, ElementRegistration>,
 }
 
 impl SurfaceElements {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the registration for `element_id`, when this root contains one.
     pub fn get(&self, element_id: ElementId) -> Option<&ElementRegistration> {
         self.registrations.get(&element_id)
     }
 
-    /// Performs the associated runtime operation.
+    /// Iterates registrations in ascending element-identity order.
     pub fn iter(&self) -> impl Iterator<Item = &ElementRegistration> {
         self.registrations.values()
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// The event-routing phases supported by one registered element.
 pub struct ElementRegistration {
     id: ElementId,
     phases: BTreeSet<ElementPhase>,
 }
 
 impl ElementRegistration {
-    /// Constructs this runtime value.
+    /// Registers `id` for one or more routing phases.
+    ///
+    /// Duplicate phases are coalesced; an empty phase set returns
+    /// [`SurfaceErrorCode::MissingElementPhase`] without constructing a registration.
     pub fn try_new(
         id: ElementId,
         phases: impl IntoIterator<Item = ElementPhase>,
@@ -102,12 +110,12 @@ impl ElementRegistration {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns this registration's element identity by value.
     pub const fn id(&self) -> ElementId {
         self.id
     }
 
-    /// Performs the associated runtime operation.
+    /// Iterates supported phases in deterministic phase order.
     pub fn phases(&self) -> impl Iterator<Item = ElementPhase> + '_ {
         self.phases.iter().copied()
     }
@@ -118,18 +126,18 @@ impl ElementRegistration {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-/// Classifies a public runtime state or outcome.
+/// A phase in a validated surface event route.
 pub enum ElementPhase {
-    /// One case of this public runtime contract.
+    /// Delivers the route while descending toward its target.
     Capture,
-    /// One case of this public runtime contract.
+    /// Delivers the route to its single target element.
     Target,
-    /// One case of this public runtime contract.
+    /// Delivers the route while ascending away from its target.
     Bubble,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-/// A public runtime value with a private representation.
+/// A surface identity paired with the generation that makes references current.
 pub struct SurfaceRef {
     surface_id: SurfaceId,
     generation: SurfaceGeneration,
@@ -137,7 +145,7 @@ pub struct SurfaceRef {
 
 impl SurfaceRef {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Couples a surface identity with the exact generation required by validation.
     pub const fn new(surface_id: SurfaceId, generation: SurfaceGeneration) -> Self {
         Self {
             surface_id,
@@ -146,20 +154,20 @@ impl SurfaceRef {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the surface identity by value.
     pub const fn surface_id(&self) -> SurfaceId {
         self.surface_id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the generation that must match the current surface.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.generation
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-/// A public runtime value with a private representation.
+/// A generation-qualified reference to one element on one surface.
 pub struct SurfaceElementRef {
     surface: SurfaceRef,
     element_id: ElementId,
@@ -167,7 +175,7 @@ pub struct SurfaceElementRef {
 
 impl SurfaceElementRef {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Couples a generation-qualified surface with an element identity.
     pub const fn new(surface: SurfaceRef, element_id: ElementId) -> Self {
         Self {
             surface,
@@ -176,39 +184,42 @@ impl SurfaceElementRef {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the complete generation-qualified surface reference by value.
     pub const fn surface(&self) -> SurfaceRef {
         self.surface
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the owning surface identity by value.
     pub const fn surface_id(&self) -> SurfaceId {
         self.surface.surface_id()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the surface generation required for this reference to remain current.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.surface.generation()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the referenced element identity by value.
     pub const fn element_id(&self) -> ElementId {
         self.element_id
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A validated ordered route through elements on one generation-qualified surface.
 pub struct SurfaceRoute {
     surface: SurfaceRef,
     steps: Vec<SurfaceRouteStep>,
 }
 
 impl SurfaceRoute {
-    /// Constructs this runtime value.
+    /// Validates and stores route steps for one surface.
+    ///
+    /// The route must be nonempty, have exactly one target, and order capture
+    /// before target before bubble; rejected inputs construct no route.
     pub fn try_new(
         surface: SurfaceRef,
         steps: impl IntoIterator<Item = SurfaceRouteStep>,
@@ -252,31 +263,31 @@ impl SurfaceRoute {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the route's generation-qualified surface by value.
     pub const fn surface(&self) -> SurfaceRef {
         self.surface
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the routed surface identity by value.
     pub const fn surface_id(&self) -> SurfaceId {
         self.surface.surface_id()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the routed surface generation by value.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.surface.generation()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows route steps in their validated delivery order.
     pub fn steps(&self) -> &[SurfaceRouteStep] {
         &self.steps
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the route's uniquely validated target element reference.
     pub fn target(&self) -> SurfaceElementRef {
         let step = self
             .steps
@@ -288,7 +299,7 @@ impl SurfaceRoute {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// One element and routing phase in a [`SurfaceRoute`].
 pub struct SurfaceRouteStep {
     element_id: ElementId,
     phase: ElementPhase,
@@ -296,26 +307,28 @@ pub struct SurfaceRouteStep {
 
 impl SurfaceRouteStep {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Couples an element identity with its declared route phase.
     pub const fn new(element_id: ElementId, phase: ElementPhase) -> Self {
         Self { element_id, phase }
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the routed element identity by value.
     pub const fn element_id(&self) -> ElementId {
         self.element_id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns this step's delivery phase by value.
     pub const fn phase(&self) -> ElementPhase {
         self.phase
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// Unsigned logical viewport dimensions for a surface.
+///
+/// [`Default::default`] is a zero-width, zero-height viewport.
 pub struct SurfaceSize {
     width: u32,
     height: u32,
@@ -323,26 +336,28 @@ pub struct SurfaceSize {
 
 impl SurfaceSize {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores logical width and height; zero is valid for either dimension.
     pub const fn new(width: u32, height: u32) -> Self {
         Self { width, height }
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the logical width by value.
     pub const fn width(&self) -> u32 {
         self.width
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the logical height by value.
     pub const fn height(&self) -> u32 {
         self.height
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// Signed logical coordinates for a surface interaction or scroll offset.
+///
+/// [`Default::default`] is [`Self::origin`].
 pub struct SurfacePoint {
     x: i32,
     y: i32,
@@ -350,32 +365,32 @@ pub struct SurfacePoint {
 
 impl SurfacePoint {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores exact logical coordinates, including negative overscroll positions.
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Returns the default `(0, 0)` logical origin.
     pub const fn origin() -> Self {
         Self::new(0, 0)
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the horizontal coordinate by value.
     pub const fn x(&self) -> i32 {
         self.x
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the vertical coordinate by value.
     pub const fn y(&self) -> i32 {
         self.y
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// The observable result of a local surface state update.
 pub struct SurfaceMutation {
     changed: bool,
     invalidation_generation: Option<SurfaceInvalidationGeneration>,
@@ -405,19 +420,19 @@ impl SurfaceMutation {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns whether the requested update changed observable surface state.
     pub const fn changed(&self) -> bool {
         self.changed
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the issued invalidation generation when state changed.
     pub const fn invalidation_generation(&self) -> Option<SurfaceInvalidationGeneration> {
         self.invalidation_generation
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns whether the changed surface is immediately eligible for redraw.
     pub const fn redraw_required(&self) -> bool {
         self.redraw_required
     }
@@ -857,43 +872,43 @@ impl UiSurface {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the currently installed root and its element registry.
     pub const fn root(&self) -> &SurfaceRoot {
         &self.root
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the current lifecycle phase by value.
     pub const fn lifecycle(&self) -> SurfaceLifecycle {
         self.lifecycle
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the current logical viewport by value.
     pub const fn viewport(&self) -> SurfaceSize {
         self.viewport
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the current logical scroll offset by value.
     pub const fn scroll_offset(&self) -> SurfacePoint {
         self.scroll_offset
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the generation-qualified focused element, when one is selected.
     pub const fn focused_element(&self) -> Option<SurfaceElementRef> {
         self.focused
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the generation-qualified hovered element, when one is selected.
     pub const fn hovered_element(&self) -> Option<SurfaceElementRef> {
         self.hovered
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows pending invalidations in issue order.
     pub fn invalidations(&self) -> &[SurfaceInvalidation] {
         &self.invalidations
     }
@@ -958,7 +973,13 @@ impl UiSurface {
         self.transition_to(SurfaceLifecycle::Destroyed)
     }
 
-    /// Performs the associated runtime operation.
+    /// Replaces the root and advances this surface to a new generation.
+    ///
+    /// The replacement clears focused and hovered element references, resets the
+    /// last rendered invalidation marker, and appends a `RootReplaced`
+    /// invalidation that requests redraw when the lifecycle is renderable. Terminal
+    /// surfaces are rejected, and generation or invalidation overflow leaves the
+    /// root, generation, interaction state, and invalidation queue unchanged.
     pub fn replace_root(&mut self, root: SurfaceRoot) -> Result<SurfaceGeneration, SurfaceError> {
         self.ensure_not_terminal()?;
         let generation = self
@@ -981,7 +1002,10 @@ impl UiSurface {
         Ok(generation)
     }
 
-    /// Performs the associated runtime operation.
+    /// Returns a current reference to a registered element.
+    ///
+    /// Terminal surfaces and unknown elements are rejected without changing surface
+    /// state.
     pub fn element_ref(&self, element_id: ElementId) -> Result<SurfaceElementRef, SurfaceError> {
         self.ensure_not_terminal()?;
         let reference = SurfaceElementRef::new(self.surface_ref(), element_id);

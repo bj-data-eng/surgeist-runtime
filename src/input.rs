@@ -1,7 +1,7 @@
 use super::InputProvenance;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// One application payload paired with the provenance that explains its origin.
 pub struct AppInput<T> {
     payload: T,
     provenance: InputProvenance,
@@ -9,7 +9,7 @@ pub struct AppInput<T> {
 
 impl<T> AppInput<T> {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores an owned payload and its already-established input provenance.
     pub fn new(payload: T, provenance: InputProvenance) -> Self {
         Self {
             payload,
@@ -18,19 +18,19 @@ impl<T> AppInput<T> {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the payload without separating it from this input's provenance.
     pub const fn payload(&self) -> &T {
         &self.payload
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this input and returns the owned payload, discarding its provenance.
     pub fn into_payload(self) -> T {
         self.payload
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the provenance attached when this input was created.
     pub const fn provenance(&self) -> &InputProvenance {
         &self.provenance
     }

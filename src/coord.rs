@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashMap, error::Error, fmt};
 use super::{CustomScopeId, ResourceId, ServiceId, SurfaceId, SurfaceRef, TaskIntentKey, WindowId};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-/// A public runtime value with a private representation.
+/// One owned namespace/value component in an [`AppScope`] path.
 pub struct ScopePathSegment {
     namespace: String,
     value: String,
@@ -11,7 +11,7 @@ pub struct ScopePathSegment {
 
 impl ScopePathSegment {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores the namespace and value text as one owned path component.
     pub fn new(namespace: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             namespace: namespace.into(),
@@ -20,27 +20,30 @@ impl ScopePathSegment {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows this component's namespace.
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows this component's namespace-local value.
     pub fn value(&self) -> &str {
         &self.value
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-/// A public runtime value with a private representation.
+/// A structured scope used to partition runtime-owned coordination.
+///
+/// Scope constructors start at application scope and add one typed or textual
+/// segment; [`Self::then`] can further refine that path without interpretation.
 pub struct AppScope {
     segments: Vec<ScopePathSegment>,
 }
 
 impl AppScope {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates the root application scope with no path segments.
     pub fn app() -> Self {
         Self {
             segments: Vec::new(),
@@ -48,75 +51,75 @@ impl AppScope {
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to the supplied window identity.
     pub fn window(id: WindowId) -> Self {
         Self::app().then(ScopePathSegment::new("window", id.as_u64().to_string()))
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to the supplied surface identity.
     pub fn surface(id: SurfaceId) -> Self {
         Self::app().then(ScopePathSegment::new("surface", id.as_u64().to_string()))
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to the supplied resource identity.
     pub fn resource(id: ResourceId) -> Self {
         Self::app().then(ScopePathSegment::new("resource", id.as_str()))
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to an opaque custom identity.
     pub fn custom(id: impl Into<CustomScopeId>) -> Self {
         let id = id.into();
         Self::app().then(ScopePathSegment::new("custom", id.as_str()))
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to the supplied workspace text.
     pub fn workspace(value: impl Into<String>) -> Self {
         Self::app().then(ScopePathSegment::new("workspace", value))
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to the supplied document text.
     pub fn document(value: impl Into<String>) -> Self {
         Self::app().then(ScopePathSegment::new("document", value))
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Creates an application scope refined to the supplied widget text.
     pub fn widget(value: impl Into<String>) -> Self {
         Self::app().then(ScopePathSegment::new("widget", value))
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this scope and appends one owned segment to its path.
     pub fn then(mut self, segment: ScopePathSegment) -> Self {
         self.segments.push(segment);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows every path segment in root-to-leaf order.
     pub fn segments(&self) -> &[ScopePathSegment] {
         &self.segments
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns whether this is the unrefined root application scope.
     pub fn is_app(&self) -> bool {
         self.segments.is_empty()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the final resource segment as an owned resource identity, when present.
     pub fn resource_id(&self) -> Option<ResourceId> {
         self.last_value("resource").map(ResourceId::new)
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the final parseable window segment, when present.
     pub fn window_id(&self) -> Option<WindowId> {
         self.last_value("window")
             .and_then(|value| value.parse().ok())
@@ -124,7 +127,7 @@ impl AppScope {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the final parseable surface segment, when present.
     pub fn surface_id(&self) -> Option<SurfaceId> {
         self.last_value("surface")
             .and_then(|value| value.parse().ok())
@@ -153,32 +156,32 @@ impl From<String> for CustomScopeId {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-/// A public runtime value with a private representation.
+/// An extensible identifier for the kind of object observed by a subscription.
 pub struct SubscriptionTargetKindId(Cow<'static, str>);
 
 impl SubscriptionTargetKindId {
-    /// A predefined runtime contract identifier.
+    /// Identifies subscriptions observing abstract task intents.
     pub const TASK: Self = Self(Cow::Borrowed("task"));
-    /// A predefined runtime contract identifier.
+    /// Identifies subscriptions observing resource state.
     pub const RESOURCE: Self = Self(Cow::Borrowed("resource"));
-    /// A predefined runtime contract identifier.
+    /// Identifies subscriptions observing service state.
     pub const SERVICE: Self = Self(Cow::Borrowed("service"));
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Stores a custom target-kind identifier for root-owned extension points.
     pub fn new(value: impl Into<String>) -> Self {
         Self(Cow::Owned(value.into()))
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the target-kind text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-/// A public runtime value with a private representation.
+/// The target kind and key selected by one subscription.
 pub struct SubscriptionTarget {
     kind: SubscriptionTargetKindId,
     key: String,
@@ -186,7 +189,7 @@ pub struct SubscriptionTarget {
 
 impl SubscriptionTarget {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Couples an owned target kind with an owned target-specific key.
     pub fn new(kind: SubscriptionTargetKindId, key: impl Into<String>) -> Self {
         Self {
             kind,
@@ -195,31 +198,31 @@ impl SubscriptionTarget {
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Targets the task intent identified by `key`.
     pub fn task(key: TaskIntentKey) -> Self {
         Self::new(SubscriptionTargetKindId::TASK, key.as_str())
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Targets the resource identified by `id`.
     pub fn resource(id: ResourceId) -> Self {
         Self::new(SubscriptionTargetKindId::RESOURCE, id.as_str())
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Targets the service identified by `id`.
     pub fn service(id: ServiceId) -> Self {
         Self::new(SubscriptionTargetKindId::SERVICE, id.as_str())
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the target's kind discriminator.
     pub fn kind(&self) -> &SubscriptionTargetKindId {
         &self.kind
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the target-specific key text.
     pub fn key(&self) -> &str {
         &self.key
     }
@@ -228,12 +231,12 @@ impl SubscriptionTarget {
 /// The relative importance of a subscription when aggregates are queried.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SubscriptionPriority {
-    /// One case of this public runtime contract.
+    /// Retains this subscription below normal and high-priority subscriptions.
     Low,
     #[default]
-    /// One case of this public runtime contract.
+    /// The default priority for subscriptions without an explicit preference.
     Normal,
-    /// One case of this public runtime contract.
+    /// Retains this subscription above normal and low-priority subscriptions.
     High,
 }
 
@@ -251,7 +254,7 @@ pub struct SubscriptionKey {
 
 impl SubscriptionKey {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Forms the full identity used for refcounting one observer subscription.
     pub fn new(
         target: SubscriptionTarget,
         scope: AppScope,
@@ -267,25 +270,25 @@ impl SubscriptionKey {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the observed target.
     pub const fn target(&self) -> &SubscriptionTarget {
         &self.target
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the coordination scope attached to this subscription.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the generation-qualified observer surface by value.
     pub const fn observer(&self) -> SurfaceRef {
         self.observer
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the priority participating in this key's identity.
     pub const fn priority(&self) -> SubscriptionPriority {
         self.priority
     }
@@ -516,6 +519,8 @@ impl SubscriptionAggregate {
 }
 
 /// Stores subscription references while runtime owns observer validation.
+///
+/// [`Default::default`] starts with no active subscription keys.
 #[derive(Clone, Debug, Default)]
 pub struct CoordinationState {
     ref_counts: HashMap<SubscriptionKey, usize>,

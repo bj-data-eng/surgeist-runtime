@@ -1172,7 +1172,10 @@ where
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// Per-turn limits for the total number of inputs and inputs from each runtime lane.
+///
+/// Zero is a valid limit and prevents draining that lane or all lanes, as applicable.
+/// [`Default::default`] sets the global limit to 64 and every lane limit to 32.
 pub struct RuntimeBudget {
     max_inputs: usize,
     max_ui_inputs: usize,

@@ -7,25 +7,25 @@ use super::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// Classifies a public runtime state or outcome.
+/// Selects the surfaces a locally handled redraw effect invalidates for rendering.
 pub enum RedrawTarget {
-    /// One case of this public runtime contract.
+    /// Selects every currently registered surface.
     All,
-    /// One case of this public runtime contract.
+    /// Selects one generation-qualified surface and rejects stale references.
     Surface(SurfaceRef),
-    /// One case of this public runtime contract.
+    /// Selects every registered surface belonging to one window.
     Window(WindowId),
 }
 
 impl RedrawTarget {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Selects all registered surfaces for redraw.
     pub const fn all() -> Self {
         Self::All
     }
 
     #[must_use]
-    /// Constructs this runtime value.
+    /// Selects exactly the supplied generation-qualified surface for redraw.
     pub const fn surface(surface: SurfaceRef) -> Self {
         Self::Surface(surface)
     }
@@ -275,21 +275,21 @@ pub enum AppEffectPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// The target carried by an [`AppEffect::request_redraw`] effect.
 pub struct RequestRedrawEffect {
     target: RedrawTarget,
 }
 
 impl RequestRedrawEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the redraw target that runtime resolves locally.
     pub const fn target(&self) -> &RedrawTarget {
         &self.target
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// An adapter-owned persistence request and its coordination scope.
 pub struct PersistEffect {
     key: String,
     scope: AppScope,
@@ -297,27 +297,27 @@ pub struct PersistEffect {
 
 impl PersistEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the persistence key passed unchanged to the root adapter.
     pub fn key(&self) -> &str {
         &self.key
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the scope that partitions this persistence request.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A locally handled diagnostic effect that owns its diagnostic.
 pub struct DiagnosticEffect {
     diagnostic: Box<Diagnostic>,
 }
 
 impl DiagnosticEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the diagnostic runtime records when processing this effect.
     pub fn diagnostic(&self) -> &Diagnostic {
         self.diagnostic.as_ref()
     }
@@ -351,7 +351,7 @@ impl LoadResourceEffect {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter invalidation request for one resource and its explicit reason.
 pub struct InvalidateResourceEffect {
     id: ResourceId,
     reason: String,
@@ -359,20 +359,20 @@ pub struct InvalidateResourceEffect {
 
 impl InvalidateResourceEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the resource identity passed unchanged to the adapter.
     pub fn id(&self) -> &ResourceId {
         &self.id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the invalidation reason passed unchanged to the adapter.
     pub fn reason(&self) -> &str {
         &self.reason
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter request to start an abstract task intent.
 pub struct StartTaskEffect {
     name: TaskIntentName,
     key: TaskIntentKey,
@@ -381,40 +381,40 @@ pub struct StartTaskEffect {
 
 impl StartTaskEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the abstract task kind without selecting a concrete executor.
     pub fn name(&self) -> &TaskIntentName {
         &self.name
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the caller-provided task correlation key.
     pub fn key(&self) -> &TaskIntentKey {
         &self.key
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the scope carried into root-owned task lowering.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter request to cancel one exact task-intent attempt.
 pub struct CancelTaskEffect {
     handle: TaskIntentHandle,
 }
 
 impl CancelTaskEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the intent-and-attempt handle by value.
     pub const fn handle(&self) -> TaskIntentHandle {
         self.handle
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter request to update one task attempt's scheduling hint.
 pub struct ReprioritizeTaskEffect {
     handle: TaskIntentHandle,
     priority: TaskPriorityHint,
@@ -422,48 +422,48 @@ pub struct ReprioritizeTaskEffect {
 
 impl ReprioritizeTaskEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the intent-and-attempt handle by value.
     pub const fn handle(&self) -> TaskIntentHandle {
         self.handle
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the requested scheduling preference by value.
     pub const fn priority(&self) -> TaskPriorityHint {
         self.priority
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter request to start a service with the supplied identity.
 pub struct StartServiceEffect {
     id: ServiceId,
 }
 
 impl StartServiceEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the service identity passed unchanged to the adapter.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter request to stop a service with the supplied identity.
 pub struct StopServiceEffect {
     id: ServiceId,
 }
 
 impl StopServiceEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the service identity passed unchanged to the adapter.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A root-adapter service command with its opaque payload and correlation identity.
 pub struct CallServiceEffect {
     id: ServiceId,
     command: ServiceCommandName,
@@ -473,32 +473,32 @@ pub struct CallServiceEffect {
 
 impl CallServiceEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the receiving service identity.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the service command name.
     pub const fn command(&self) -> &ServiceCommandName {
         &self.command
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the opaque payload text without decoding it.
     pub const fn payload(&self) -> &ServiceCommandPayload {
         &self.payload
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the nonzero correlation identity by value.
     pub const fn correlation(&self) -> CorrelationId {
         self.correlation
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// A locally handled diagnostic tagged with the service that produced it.
 pub struct ServiceDiagnosticEffect {
     id: ServiceId,
     diagnostic: Box<Diagnostic>,
@@ -506,20 +506,22 @@ pub struct ServiceDiagnosticEffect {
 
 impl ServiceDiagnosticEffect {
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the associated service identity.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the diagnostic runtime records for the service.
     pub fn diagnostic(&self) -> &Diagnostic {
         self.diagnostic.as_ref()
     }
 }
 
 #[derive(Clone, Debug, Default)]
-/// A public runtime value with a private representation.
+/// An ordered collection of effects emitted by one successful reducer commit.
+///
+/// [`Default::default`] is an empty batch.
 pub struct EffectBatch {
     effects: Vec<AppEffect>,
 }
@@ -656,20 +658,20 @@ impl EffectOutcome {
 
 impl EffectBatch {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Returns the empty effect batch, equivalent to [`Default::default`].
     pub fn new() -> Self {
         Self::default()
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes this batch and appends an effect after all existing effects.
     pub fn push(mut self, effect: AppEffect) -> Self {
         self.effects.push(effect);
         self
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows effects in reducer-declared processing order.
     pub fn effects(&self) -> &[AppEffect] {
         &self.effects
     }

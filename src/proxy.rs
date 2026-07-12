@@ -137,7 +137,7 @@ impl<Input> AppProxy<Input> {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the number of task or service inputs still awaiting a host drain.
     pub fn pending_len(&self) -> usize {
         self.lock_state().queue.len()
     }
@@ -335,20 +335,22 @@ enum WakeOwner {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-/// A public runtime value with a private representation.
+/// Immutable capacity policy for an [`AppProxy`] staging queue.
+///
+/// [`Default::default`] retains at most 65,536 inputs.
 pub struct QueuePolicy {
     capacity: usize,
 }
 
 impl QueuePolicy {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Limits a proxy to `capacity` queued inputs; zero rejects every send.
     pub const fn bounded(capacity: usize) -> Self {
         Self { capacity }
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the maximum number of inputs the proxy may retain at once.
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
@@ -457,7 +459,10 @@ impl<Input: fmt::Debug> Error for AppProxyError<Input> {
 }
 
 #[must_use]
-/// A public runtime value with a private representation.
+/// The result of one host-facing proxy drain.
+///
+/// It owns the FIFO inputs transferred out of the proxy and records whether the
+/// root adapter must arrange another turn after a continuation-wake failure.
 pub struct ProxyDrainReport<Input> {
     drained: Vec<ProxyInput<Input>>,
     remaining_len: usize,
@@ -478,31 +483,31 @@ impl<Input> ProxyDrainReport<Input> {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the inputs removed in FIFO order during this drain.
     pub fn drained(&self) -> &[ProxyInput<Input>] {
         &self.drained
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Consumes the report and returns the drained inputs in FIFO order.
     pub fn into_drained(self) -> Vec<ProxyInput<Input>> {
         self.drained
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns how many inputs remained queued after this drain.
     pub const fn remaining_len(&self) -> usize {
         self.remaining_len
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns whether the proxy retained inputs for a later host turn.
     pub const fn has_remaining(&self) -> bool {
         self.remaining_len != 0
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Borrows the failed continuation wake, when queued inputs remain unsignaled.
     pub fn continuation_wake_error(&self) -> Option<&WakeError> {
         self.continuation_wake_error.as_ref()
     }

@@ -109,7 +109,7 @@ impl Error for CorrelationError {}
 
 impl SurfaceGeneration {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Returns generation zero for a newly created surface.
     pub const fn initial() -> Self {
         Self(0)
     }
@@ -117,7 +117,7 @@ impl SurfaceGeneration {
 
 impl SurfaceInvalidationGeneration {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Returns invalidation generation zero before the surface records a mutation.
     pub const fn initial() -> Self {
         Self(0)
     }
@@ -125,14 +125,17 @@ impl SurfaceInvalidationGeneration {
 
 impl ResourceGeneration {
     #[must_use]
-    /// Constructs this runtime value.
+    /// Returns generation zero for a newly created resource state.
     pub const fn initial() -> Self {
         Self(0)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-/// A public runtime value with a private representation.
+/// A nonzero operation identity issued by a [`ResourceState`](crate::ResourceState).
+///
+/// Resource state owns issuance; callers can inspect this value but cannot construct
+/// one, preventing completion and cancellation calls from inventing an operation.
 pub struct ResourceOperationId(NonZeroU64);
 
 impl ResourceOperationId {
@@ -141,7 +144,7 @@ impl ResourceOperationId {
     }
 
     #[must_use]
-    /// Performs the associated runtime operation.
+    /// Returns the nonzero numeric token issued for this operation.
     pub const fn get(self) -> u64 {
         self.0.get()
     }
@@ -149,9 +152,9 @@ impl ResourceOperationId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-/// Classifies a public runtime state or outcome.
+/// Reports that a checked runtime counter cannot advance further.
 pub enum VersionError {
-    /// One case of this public runtime contract.
+    /// Incrementing a generation or operation counter would overflow its representation.
     Overflow,
 }
 
