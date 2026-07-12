@@ -30,6 +30,6 @@ where
     R: Reducer<State, Input>,
 {
     pub fn step(&mut self, budget: RuntimeBudget) -> Result<RuntimeDrainReport, RuntimeDrainError> {
-        Ok(self.runtime.drain_once(budget))
+        self.runtime.drain_once(budget)
     }
 }

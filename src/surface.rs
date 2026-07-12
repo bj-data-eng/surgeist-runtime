@@ -1031,19 +1031,21 @@ impl UiSurface {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C04 reducer commits will record local snapshot invalidations"
-        )
-    )]
     pub(crate) fn invalidate_snapshot(
         &mut self,
         version: StateVersion,
     ) -> Result<SurfaceMutation, SurfaceError> {
         self.ensure_not_terminal()?;
         self.apply_change(SurfaceInvalidationKind::SnapshotChanged { version }, |_| {})
+    }
+
+    pub(crate) fn preflight_snapshot_invalidation(
+        &self,
+    ) -> Result<SurfaceInvalidationGeneration, VersionError> {
+        self.last_invalidation_generation.map_or(
+            Ok(SurfaceInvalidationGeneration::initial()),
+            CheckedNext::checked_next,
+        )
     }
 
     pub(crate) fn begin_render(

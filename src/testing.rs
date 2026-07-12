@@ -134,7 +134,7 @@ pub enum ServiceRequestStatus {
 pub struct PrototypeApp {
     budget: RuntimeBudget,
     runtime: Runtime<PrototypeState, PrototypeReducer, PrototypeInput>,
-    remaining_task_inputs: usize,
+    last_drain_inputs: usize,
     wake: FakeWakeBridge,
     proxy: AppProxy<PrototypeInput>,
     next_request_id: u64,
@@ -245,14 +245,17 @@ impl PrototypeApp {
 
     pub fn drain(&mut self) {
         self.flush_proxy();
-        let report = self.runtime.drain_once(self.budget);
-        self.remaining_task_inputs = report.remaining_task_inputs();
+        let report = self
+            .runtime
+            .drain_once(self.budget)
+            .expect("prototype fixtures do not construct overflowing runtime transactions");
+        self.last_drain_inputs = report.drained_inputs();
     }
 
     pub fn drain_all(&mut self) {
         loop {
             self.drain();
-            if self.proxy.pending_len() == 0 && self.remaining_task_inputs == 0 {
+            if self.proxy.pending_len() == 0 && self.last_drain_inputs == 0 {
                 break;
             }
         }
@@ -266,11 +269,6 @@ impl PrototypeApp {
     #[must_use]
     pub fn log_lines(&self) -> &[String] {
         &self.runtime.state().log_lines
-    }
-
-    #[must_use]
-    pub const fn remaining_task_inputs(&self) -> usize {
-        self.remaining_task_inputs
     }
 
     #[must_use]
@@ -384,7 +382,7 @@ impl PrototypeApp {
         Self {
             budget,
             runtime: Runtime::new(PrototypeState::default(), PrototypeReducer),
-            remaining_task_inputs: 0,
+            last_drain_inputs: 0,
             wake,
             proxy,
             next_request_id: 1,

@@ -1,12 +1,17 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    error::Error,
+    fmt,
+};
 
 use super::{
     AppEffect, AppEffectPayload, AppInput, CoordinationState, Diagnostic, DiagnosticCode,
-    DiagnosticLog, ElementPhase, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer,
-    ReducerResult, StateVersion, Subscription, SubscriptionChange, SubscriptionError,
-    SubscriptionErrorCode, SubscriptionKey, SurfaceElementRef, SurfaceError, SurfaceErrorCode,
-    SurfaceGeneration, SurfaceId, SurfaceLifecycle, SurfaceMutation, SurfacePoint, SurfaceRef,
-    SurfaceRenderAck, SurfaceRenderFrame, SurfaceRenderState, SurfaceRoute, SurfaceSize, UiSurface,
+    DiagnosticLog, EffectOutcome, ElementPhase, InputProvenance, QueueDiagnostic, RedrawTarget,
+    Reducer, ReducerResult, RuntimeIntent, StateVersion, Subscription, SubscriptionChange,
+    SubscriptionError, SubscriptionErrorCode, SubscriptionKey, SurfaceElementRef, SurfaceError,
+    SurfaceErrorCode, SurfaceGeneration, SurfaceId, SurfaceLifecycle, SurfaceMutation,
+    SurfacePoint, SurfaceRef, SurfaceRenderAck, SurfaceRenderFrame, SurfaceRenderState,
+    SurfaceRoute, SurfaceSize, UiSurface, VersionError,
 };
 use crate::ids::CheckedNext;
 
@@ -552,6 +557,11 @@ impl<State, R, Input> Runtime<State, R, Input> {
     ) {
         self.retired_surface_generations.insert(id, generation);
     }
+
+    #[cfg(test)]
+    pub(crate) fn set_state_version_for_test(&mut self, state_version: StateVersion) {
+        self.state_version = state_version;
+    }
 }
 
 const fn is_terminal(lifecycle: SurfaceLifecycle) -> bool {
@@ -606,18 +616,26 @@ impl<State, R, Input> Runtime<State, R, Input>
 where
     R: Reducer<State, Input>,
 {
-    pub fn drain_once(&mut self, budget: RuntimeBudget) -> RuntimeDrainReport {
-        let mut report = RuntimeDrainReport {
-            remaining_task_inputs: self.task_queue.len(),
-            ..RuntimeDrainReport::default()
-        };
+    /// Drains queued inputs in the current lane order until `budget` is exhausted.
+    ///
+    /// A checked changed-state transaction that cannot advance its state version
+    /// or a required surface invalidation returns the partial work committed
+    /// before that input and restores the exact input to the front of its lane.
+    pub fn drain_once(
+        &mut self,
+        budget: RuntimeBudget,
+    ) -> Result<RuntimeDrainReport, RuntimeDrainError> {
+        let mut report = RuntimeDrainReport::default();
 
         while report.drained_inputs < budget.max_inputs && !self.ui_queue.is_empty() {
             let input = self
                 .ui_queue
                 .pop_front()
                 .expect("queue was checked before pop");
-            self.drain_input(RuntimeLane::Ui, input.into_app_input(), &mut report);
+            if let Err(overflow) = self.drain_input(RuntimeLane::Ui, &input.input, &mut report) {
+                self.ui_queue.push_front(input);
+                return Err(overflow.into_error(RuntimeLane::Ui, report));
+            }
         }
 
         let mut drained_task_events = 0;
@@ -629,8 +647,11 @@ where
                 .task_queue
                 .pop_front()
                 .expect("queue was checked before pop");
+            if let Err(overflow) = self.drain_input(RuntimeLane::Task, &input.input, &mut report) {
+                self.task_queue.push_front(input);
+                return Err(overflow.into_error(RuntimeLane::Task, report));
+            }
             drained_task_events += 1;
-            self.drain_input(RuntimeLane::Task, input.into_app_input(), &mut report);
         }
 
         let mut drained_service_events = 0;
@@ -642,22 +663,27 @@ where
                 .service_queue
                 .pop_front()
                 .expect("queue was checked before pop");
+            if let Err(overflow) = self.drain_input(RuntimeLane::Service, &input.input, &mut report)
+            {
+                self.service_queue.push_front(input);
+                return Err(overflow.into_error(RuntimeLane::Service, report));
+            }
             drained_service_events += 1;
-            self.drain_input(RuntimeLane::Service, input.into_app_input(), &mut report);
         }
 
-        report.remaining_task_inputs = self.task_queue.len();
-        report
+        report.finish();
+        Ok(report)
     }
 
     fn drain_input(
         &mut self,
         lane: RuntimeLane,
-        input: AppInput<Input>,
+        input: &AppInput<Input>,
         report: &mut RuntimeDrainReport,
-    ) {
+    ) -> Result<(), DrainOverflow> {
+        self.reduce_input(input, report)?;
         Self::record_drained_input(lane, report);
-        self.reduce_input(input, report);
+        Ok(())
     }
 
     fn record_drained_input(lane: RuntimeLane, report: &mut RuntimeDrainReport) {
@@ -667,19 +693,27 @@ where
         report.drained_inputs += 1;
     }
 
-    fn reduce_input(&mut self, input: AppInput<Input>, report: &mut RuntimeDrainReport) {
+    fn reduce_input(
+        &mut self,
+        input: &AppInput<Input>,
+        report: &mut RuntimeDrainReport,
+    ) -> Result<(), DrainOverflow> {
         let provenance = input.provenance().clone();
-        match self.reducer.reduce(&self.state, &input) {
-            ReducerResult::Unchanged(commit) => self.execute_commit(&commit, report),
+        match self.reducer.reduce(&self.state, input) {
+            ReducerResult::Unchanged(commit) => {
+                self.execute_commit(&commit, provenance, report);
+            }
             ReducerResult::Changed(change) => {
                 let (state, commit) = change.into_parts();
                 let next_version = self
                     .state_version
                     .checked_next()
-                    .expect("state version overflow is handled by the runtime transaction");
+                    .map_err(|source| DrainOverflow::state(provenance.clone(), source))?;
+                self.preflight_snapshot_invalidations(&provenance)?;
                 self.state = state;
                 self.state_version = next_version;
-                self.execute_commit(&commit, report);
+                self.record_snapshot_invalidations(next_version, report);
+                self.execute_commit(&commit, provenance, report);
             }
             ReducerResult::RecoverableFailure(failure) => {
                 report.reducer_errors += 1;
@@ -690,101 +724,134 @@ where
                 ));
             }
         }
+        Ok(())
     }
 
-    fn execute_commit(&mut self, commit: &super::ReducerCommit, report: &mut RuntimeDrainReport) {
-        for effect in commit.effects().effects() {
-            self.execute_effect(effect, report);
+    fn preflight_snapshot_invalidations(
+        &self,
+        provenance: &InputProvenance,
+    ) -> Result<(), DrainOverflow> {
+        for surface in self.surfaces.values() {
+            if is_terminal(surface.lifecycle()) {
+                continue;
+            }
+            surface
+                .preflight_snapshot_invalidation()
+                .map_err(|source| {
+                    DrainOverflow::surface(provenance.clone(), surface.surface_ref(), source)
+                })?;
+        }
+        Ok(())
+    }
+
+    fn record_snapshot_invalidations(
+        &mut self,
+        version: StateVersion,
+        report: &mut RuntimeDrainReport,
+    ) {
+        for surface in self.surfaces.values_mut() {
+            if is_terminal(surface.lifecycle()) {
+                continue;
+            }
+            let mutation = surface
+                .invalidate_snapshot(version)
+                .expect("runtime preflighted every nonterminal surface invalidation");
+            if mutation.redraw_required() {
+                report.redraw_requests.push(surface.surface_ref());
+            }
         }
     }
 
-    fn execute_effect(&mut self, app_effect: &AppEffect, report: &mut RuntimeDrainReport) {
+    fn execute_commit(
+        &mut self,
+        commit: &super::ReducerCommit,
+        trigger_provenance: InputProvenance,
+        report: &mut RuntimeDrainReport,
+    ) {
+        let provenance = commit.provenance().cloned().unwrap_or(trigger_provenance);
+        for effect in commit.effects().effects() {
+            self.execute_effect(effect, &provenance, report);
+        }
+    }
+
+    fn execute_effect(
+        &mut self,
+        app_effect: &AppEffect,
+        provenance: &InputProvenance,
+        report: &mut RuntimeDrainReport,
+    ) {
+        let kind = app_effect.kind().clone();
         match app_effect.payload() {
             AppEffectPayload::RequestRedraw(effect) => {
-                report.executed_effects += 1;
-                match effect.target() {
-                    RedrawTarget::All => {
-                        report.redraw_requests.extend(self.surfaces.keys().copied());
+                match self.resolve_redraw_target(effect.target()) {
+                    Ok(surfaces) => {
+                        report.redraw_requests.extend(surfaces);
+                        report.record_applied(EffectOutcome::applied(kind, provenance.clone()));
                     }
-                    RedrawTarget::Surface(surface) => {
-                        report.redraw_requests.push(surface.surface_id());
-                    }
-                    RedrawTarget::Window(window_id) => {
-                        report
-                            .redraw_requests
-                            .extend(self.surfaces.iter().filter_map(|(surface_id, surface)| {
-                                (surface.window_id() == *window_id).then_some(*surface_id)
-                            }));
+                    Err(error) => {
+                        self.reject_effect(kind, provenance.clone(), error, report);
                     }
                 }
             }
             AppEffectPayload::Diagnostic(effect) => {
-                report.executed_effects += 1;
                 self.diagnostics.push(effect.diagnostic().clone());
+                report.record_applied(EffectOutcome::applied(kind, provenance.clone()));
             }
-            AppEffectPayload::StartTask(_) => {
-                report.executed_effects += 1;
-                report.task_intents.push(app_effect.clone());
-            }
-            AppEffectPayload::CancelTask(_) => {
-                report.executed_effects += 1;
-                report.task_intents.push(app_effect.clone());
-            }
-            AppEffectPayload::LoadResource(effect) => {
-                report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("resource registry is not available")
-                        .with_resource(effect.id().clone())
-                        .with_scope(effect.scope().clone())
-                        .with_effect("runtime.load_resource"),
-                );
-            }
-            AppEffectPayload::InvalidateResource(effect) => {
-                report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("resource registry is not available")
-                        .with_resource(effect.id().clone())
-                        .with_effect("runtime.invalidate_resource"),
-                );
-            }
-            AppEffectPayload::Persist(effect) => {
-                report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("persistence registry is not available")
-                        .with_scope(effect.scope().clone())
-                        .with_effect("runtime.persist"),
-                );
-            }
-            AppEffectPayload::ReprioritizeTask(_) => {
-                report.executed_effects += 1;
-                report.task_intents.push(app_effect.clone());
-            }
-            AppEffectPayload::StartService(effect) => {
-                report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("service registry is not available")
-                        .with_service(effect.id().clone())
-                        .with_effect("runtime.start_service"),
-                );
-            }
-            AppEffectPayload::StopService(effect) => {
-                report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("service registry is not available")
-                        .with_service(effect.id().clone())
-                        .with_effect("runtime.stop_service"),
-                );
-            }
-            AppEffectPayload::CallService(effect) => {
-                report.executed_effects += 1;
-                self.diagnostics.push(
-                    effect_failed("service registry is not available")
-                        .with_service(effect.id().clone())
-                        .with_effect("runtime.call_service"),
-                );
-            }
+            AppEffectPayload::Persist(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::Persist(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::LoadResource(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::LoadResource(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::InvalidateResource(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::InvalidateResource(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::StartTask(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::StartTask(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::CancelTask(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::CancelTask(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::ReprioritizeTask(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::ReprioritizeTask(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::StartService(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::StartService(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::StopService(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::StopService(effect.clone()),
+                report,
+            ),
+            AppEffectPayload::CallService(effect) => self.forward_effect(
+                kind,
+                provenance.clone(),
+                RuntimeIntent::CallService(effect.clone()),
+                report,
+            ),
             AppEffectPayload::ServiceDiagnostic(effect) => {
-                report.executed_effects += 1;
                 self.diagnostics.push(
                     effect
                         .diagnostic()
@@ -792,8 +859,85 @@ where
                         .with_service(effect.id().clone())
                         .with_effect("runtime.service_diagnostic"),
                 );
+                report.record_applied(EffectOutcome::applied(kind, provenance.clone()));
             }
         }
+    }
+
+    fn resolve_redraw_target(
+        &self,
+        target: &RedrawTarget,
+    ) -> Result<Vec<SurfaceRef>, SurfaceError> {
+        match target {
+            RedrawTarget::All => Ok(self
+                .surfaces
+                .values()
+                .filter(|surface| is_renderable(surface.lifecycle()))
+                .map(UiSurface::surface_ref)
+                .collect()),
+            RedrawTarget::Surface(reference) => {
+                let surface = self.current_surface(*reference)?;
+                ensure_targetable(surface.lifecycle())?;
+                Ok(vec![surface.surface_ref()])
+            }
+            RedrawTarget::Window(window_id) => {
+                let matching = self
+                    .surfaces
+                    .values()
+                    .filter(|surface| surface.window_id() == *window_id)
+                    .collect::<Vec<_>>();
+                if matching.is_empty() {
+                    return Err(SurfaceError::new(
+                        SurfaceErrorCode::UnknownSurface,
+                        "window has no registered surfaces",
+                    ));
+                }
+                let eligible = matching
+                    .iter()
+                    .filter(|surface| is_renderable(surface.lifecycle()))
+                    .map(|surface| surface.surface_ref())
+                    .collect::<Vec<_>>();
+                if !eligible.is_empty() {
+                    return Ok(eligible);
+                }
+                let code = if matching
+                    .iter()
+                    .any(|surface| !is_terminal(surface.lifecycle()))
+                {
+                    SurfaceErrorCode::InvalidLifecycleTransition
+                } else {
+                    SurfaceErrorCode::TerminalSurface
+                };
+                Err(SurfaceError::new(code, "window has no eligible surfaces"))
+            }
+        }
+    }
+
+    fn forward_effect(
+        &self,
+        kind: super::EffectKindId,
+        provenance: InputProvenance,
+        intent: RuntimeIntent,
+        report: &mut RuntimeDrainReport,
+    ) {
+        report.record_forwarded(EffectOutcome::forwarded(kind, provenance, intent));
+    }
+
+    fn reject_effect(
+        &mut self,
+        kind: super::EffectKindId,
+        provenance: InputProvenance,
+        error: SurfaceError,
+        report: &mut RuntimeDrainReport,
+    ) {
+        let diagnostic = Diagnostic::error(
+            DiagnosticCode::EFFECT_FAILED,
+            format!("{}: {error}", kind.as_str()),
+            provenance.clone(),
+        )
+        .with_effect(kind.as_str());
+        self.diagnostics.push(diagnostic.clone());
+        report.record_rejected(EffectOutcome::rejected(kind, provenance, diagnostic));
     }
 }
 
@@ -840,63 +984,237 @@ impl Default for RuntimeBudget {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// The committed work and effect disposition from one successful runtime drain.
 pub struct RuntimeDrainReport {
     drained_inputs: usize,
-    executed_effects: usize,
+    applied_effects: usize,
+    forwarded_effects: usize,
+    rejected_effects: usize,
     reducer_errors: usize,
-    remaining_task_inputs: usize,
     first_drained_lane: Option<RuntimeLane>,
-    redraw_requests: Vec<SurfaceId>,
-    task_intents: Vec<AppEffect>,
+    redraw_requests: Vec<SurfaceRef>,
+    intents: Vec<RuntimeIntent>,
+    effect_outcomes: Vec<EffectOutcome>,
 }
 
+/// Identifies the checked transaction step that stopped a runtime drain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum RuntimeDrainError {}
+pub enum RuntimeDrainErrorCode {
+    /// Advancing the runtime state version would overflow.
+    StateVersionOverflow,
+    /// Advancing a nonterminal surface invalidation generation would overflow.
+    SurfaceInvalidationOverflow,
+}
+
+/// A checked runtime transaction failure with the already committed drain work.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeDrainError {
+    code: RuntimeDrainErrorCode,
+    lane: RuntimeLane,
+    provenance: InputProvenance,
+    surface: Option<SurfaceRef>,
+    partial_report: Box<RuntimeDrainReport>,
+    source: VersionError,
+}
 
 impl RuntimeDrainReport {
+    /// Returns the number of inputs that committed or failed recoverably.
     #[must_use]
     pub const fn drained_inputs(&self) -> usize {
         self.drained_inputs
     }
 
+    /// Returns the number of effects applied locally by runtime.
     #[must_use]
-    pub const fn executed_effects(&self) -> usize {
-        self.executed_effects
+    pub const fn applied_effects(&self) -> usize {
+        self.applied_effects
     }
 
+    /// Returns the number of effects preserved as adapter intents.
+    #[must_use]
+    pub const fn forwarded_effects(&self) -> usize {
+        self.forwarded_effects
+    }
+
+    /// Returns the number of effects rejected by runtime validation.
+    #[must_use]
+    pub const fn rejected_effects(&self) -> usize {
+        self.rejected_effects
+    }
+
+    /// Returns the number of recoverable reducer failures recorded as diagnostics.
     #[must_use]
     pub const fn reducer_errors(&self) -> usize {
         self.reducer_errors
     }
 
-    #[must_use]
-    pub const fn remaining_task_inputs(&self) -> usize {
-        self.remaining_task_inputs
-    }
-
+    /// Returns the first lane from which an input committed during this drain.
     #[must_use]
     pub const fn first_drained_lane(&self) -> Option<RuntimeLane> {
         self.first_drained_lane
     }
 
+    /// Returns deduplicated renderable surfaces requested for redraw.
     #[must_use]
-    pub fn redraw_requests(&self) -> &[SurfaceId] {
+    pub fn redraw_requests(&self) -> &[SurfaceRef] {
         &self.redraw_requests
     }
 
+    /// Returns forwarded adapter intents in effect commit order.
     #[must_use]
-    pub fn task_intents(&self) -> &[AppEffect] {
-        &self.task_intents
+    pub fn intents(&self) -> &[RuntimeIntent] {
+        &self.intents
+    }
+
+    /// Returns one outcome for every effect in successful commit order.
+    #[must_use]
+    pub fn effect_outcomes(&self) -> &[EffectOutcome] {
+        &self.effect_outcomes
+    }
+
+    fn record_applied(&mut self, outcome: EffectOutcome) {
+        self.applied_effects += 1;
+        self.effect_outcomes.push(outcome);
+    }
+
+    fn record_forwarded(&mut self, outcome: EffectOutcome) {
+        let intent = outcome
+            .intent()
+            .expect("forwarded effect outcomes always contain an adapter intent")
+            .clone();
+        self.forwarded_effects += 1;
+        self.intents.push(intent);
+        self.effect_outcomes.push(outcome);
+    }
+
+    fn record_rejected(&mut self, outcome: EffectOutcome) {
+        self.rejected_effects += 1;
+        self.effect_outcomes.push(outcome);
+    }
+
+    fn finish(&mut self) {
+        self.redraw_requests
+            .sort_by_key(|surface| (surface.surface_id(), surface.generation()));
+        self.redraw_requests.dedup();
     }
 }
 
-fn effect_failed(message: impl Into<String>) -> Diagnostic {
-    Diagnostic::error(
-        DiagnosticCode::EFFECT_FAILED,
-        message,
-        InputProvenance::system(),
-    )
+impl RuntimeDrainError {
+    fn new(
+        code: RuntimeDrainErrorCode,
+        lane: RuntimeLane,
+        provenance: InputProvenance,
+        surface: Option<SurfaceRef>,
+        mut partial_report: RuntimeDrainReport,
+        source: VersionError,
+    ) -> Self {
+        partial_report.finish();
+        Self {
+            code,
+            lane,
+            provenance,
+            surface,
+            partial_report: Box::new(partial_report),
+            source,
+        }
+    }
+
+    /// Returns the checked transaction step that failed.
+    #[must_use]
+    pub const fn code(&self) -> RuntimeDrainErrorCode {
+        self.code
+    }
+
+    /// Returns the lane containing the exact input restored after failure.
+    #[must_use]
+    pub const fn lane(&self) -> RuntimeLane {
+        self.lane
+    }
+
+    /// Returns the provenance of the input that triggered the failure.
+    #[must_use]
+    pub const fn provenance(&self) -> &InputProvenance {
+        &self.provenance
+    }
+
+    /// Returns the first affected surface for invalidation overflow only.
+    #[must_use]
+    pub const fn surface(&self) -> Option<SurfaceRef> {
+        self.surface
+    }
+
+    /// Returns work committed before the input that failed preflight.
+    #[must_use]
+    pub const fn partial_report(&self) -> &RuntimeDrainReport {
+        &self.partial_report
+    }
+
+    /// Returns the checked version source that caused this transaction to fail.
+    #[must_use]
+    pub const fn source(&self) -> VersionError {
+        self.source
+    }
+
+    /// Consumes this error and returns only the prior committed work.
+    #[must_use]
+    pub fn into_partial_report(self) -> RuntimeDrainReport {
+        *self.partial_report
+    }
+}
+
+impl fmt::Display for RuntimeDrainError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "runtime drain {:?} transaction failed: {}",
+            self.lane, self.source
+        )
+    }
+}
+
+impl Error for RuntimeDrainError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+struct DrainOverflow {
+    code: RuntimeDrainErrorCode,
+    provenance: InputProvenance,
+    surface: Option<SurfaceRef>,
+    source: VersionError,
+}
+
+impl DrainOverflow {
+    fn state(provenance: InputProvenance, source: VersionError) -> Self {
+        Self {
+            code: RuntimeDrainErrorCode::StateVersionOverflow,
+            provenance,
+            surface: None,
+            source,
+        }
+    }
+
+    fn surface(provenance: InputProvenance, surface: SurfaceRef, source: VersionError) -> Self {
+        Self {
+            code: RuntimeDrainErrorCode::SurfaceInvalidationOverflow,
+            provenance,
+            surface: Some(surface),
+            source,
+        }
+    }
+
+    fn into_error(self, lane: RuntimeLane, report: RuntimeDrainReport) -> RuntimeDrainError {
+        RuntimeDrainError::new(
+            self.code,
+            lane,
+            self.provenance,
+            self.surface,
+            report,
+            self.source,
+        )
+    }
 }
 
 impl Default for Runtime<(), (), ()> {

@@ -95,8 +95,27 @@ fn app_loop_has_no_host_handler_or_native_loop() {
     let mut app_loop = AppLoop::new(Runtime::new(CounterState::default(), CounterReducer));
     app_loop.runtime_mut().enqueue_ui(input);
 
-    assert_eq!(app_loop.step(RuntimeBudget::new()), Ok(expected));
+    assert_eq!(app_loop.step(RuntimeBudget::new()), expected);
     assert_eq!(app_loop.into_runtime().state().value, 1);
+}
+
+#[test]
+fn app_loop_delegates_runtime_drain_errors_without_wrapping() {
+    let trigger = InputProvenance::system().with_sequence(101);
+    let mut app_loop = AppLoop::new(Runtime::new(CounterState::default(), CounterReducer));
+    app_loop
+        .runtime_mut()
+        .set_state_version_for_test(StateVersion::from_u64(u64::MAX));
+    app_loop
+        .runtime_mut()
+        .enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap());
+
+    let error = app_loop.step(RuntimeBudget::new()).unwrap_err();
+
+    assert_eq!(error.code(), RuntimeDrainErrorCode::StateVersionOverflow);
+    assert_eq!(error.lane(), RuntimeLane::Ui);
+    assert_eq!(error.provenance(), &trigger);
+    assert!(std::error::Error::source(&error).is_some());
 }
 
 #[test]
@@ -1159,7 +1178,7 @@ fn runtime_render_state_borrows_runtime_state_and_acknowledges_captured_work() {
         .set_scroll_offset(surface, SurfacePoint::new(3, 4))
         .unwrap();
     runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
-    runtime.drain_once(RuntimeBudget::new());
+    runtime.drain_once(RuntimeBudget::new()).unwrap();
 
     let render_state = runtime.begin_render(surface).unwrap();
     assert_eq!(render_state.state().value, 1);
@@ -1170,7 +1189,7 @@ fn runtime_render_state_borrows_runtime_state_and_acknowledges_captured_work() {
     );
     let frame = render_state.into_frame();
     let ack = runtime.mark_rendered(frame).unwrap();
-    assert_eq!(ack.consumed_invalidations(), 1);
+    assert_eq!(ack.consumed_invalidations(), 2);
     assert_eq!(ack.remaining_invalidations(), 0);
     assert!(!ack.redraw_required());
 }
@@ -2069,18 +2088,20 @@ fn runtime_commits_state_before_executing_effects() {
     runtime
         .register_surface(test_surface(1, 1, "main"))
         .unwrap();
+    let surface = runtime.surface_ref(SurfaceId::from_u64(1)).unwrap();
+    ready_surface(&mut runtime, surface);
 
     runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(runtime.state().value, 1);
     assert_eq!(runtime.state_version(), StateVersion::from_u64(1));
-    assert_eq!(report.executed_effects(), 1);
-    assert_eq!(report.redraw_requests(), &[SurfaceId::from_u64(1)]);
+    assert_eq!(report.applied_effects(), 1);
+    assert_eq!(report.redraw_requests(), &[surface]);
 }
 
 #[test]
-fn runtime_reports_task_intents_without_executing_them() {
+fn runtime_forwards_task_work_as_intents_without_executing_it() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
     runtime.enqueue_ui(
         UiInput::new(
@@ -2090,13 +2111,13 @@ fn runtime_reports_task_intents_without_executing_them() {
         .unwrap(),
     );
 
-    let report = runtime.drain_once(RuntimeBudget::new());
+    let report = runtime.drain_once(RuntimeBudget::new()).unwrap();
 
-    assert_eq!(report.executed_effects(), 1);
-    assert_eq!(report.task_intents().len(), 1);
+    assert_eq!(report.forwarded_effects(), 1);
+    assert_eq!(report.intents().len(), 1);
     assert_eq!(
-        report.task_intents()[0].kind().as_str(),
-        "runtime.start_task"
+        report.effect_outcomes()[0].kind().as_str(),
+        "runtime.start_task",
     );
     assert_eq!(runtime.diagnostics().entries().len(), 0);
 }
@@ -2119,12 +2140,20 @@ fn runtime_drains_ui_before_task_events_and_respects_budget() {
         .unwrap(),
     );
 
-    let report = runtime.drain_once(RuntimeBudget::new().max_inputs(1));
+    let report = runtime
+        .drain_once(RuntimeBudget::new().max_inputs(1))
+        .unwrap();
 
     assert_eq!(runtime.state().value, 1);
     assert_eq!(report.drained_inputs(), 1);
-    assert_eq!(report.remaining_task_inputs(), 1);
     assert_eq!(report.first_drained_lane(), Some(RuntimeLane::Ui));
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::new())
+            .unwrap()
+            .drained_inputs(),
+        1
+    );
 }
 
 #[test]
@@ -2143,11 +2172,17 @@ fn runtime_default_budget_caps_drained_inputs() {
         );
     }
 
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(runtime.state().value, 64);
     assert_eq!(report.drained_inputs(), 64);
-    assert_eq!(report.remaining_task_inputs(), 1);
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::default())
+            .unwrap()
+            .drained_inputs(),
+        1
+    );
 }
 
 #[test]
@@ -2182,11 +2217,10 @@ fn runtime_task_queue_overflow_records_diagnostic_and_drops_newest() {
         1
     );
 
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(runtime.state().value, 2);
     assert_eq!(report.drained_inputs(), 2);
-    assert_eq!(report.remaining_task_inputs(), 0);
 }
 
 #[test]
@@ -2218,7 +2252,7 @@ fn runtime_service_queue_overflow_records_diagnostic_and_drops_newest() {
         1
     );
 
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(runtime.state().value, 1);
     assert_eq!(report.drained_inputs(), 1);
@@ -2233,14 +2267,15 @@ fn runtime_redraw_all_reports_registered_surface_ids() {
     runtime
         .register_surface(test_surface(1, 1, "main"))
         .unwrap();
+    let first = runtime.surface_ref(SurfaceId::from_u64(1)).unwrap();
+    let second = runtime.surface_ref(SurfaceId::from_u64(2)).unwrap();
+    ready_surface(&mut runtime, first);
+    ready_surface(&mut runtime, second);
     runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
 
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
-    assert_eq!(
-        report.redraw_requests(),
-        &[SurfaceId::from_u64(1), SurfaceId::from_u64(2)]
-    );
+    assert_eq!(report.redraw_requests(), &[first, second]);
 }
 
 #[test]
@@ -2257,6 +2292,10 @@ fn runtime_redraw_window_reports_surfaces_for_that_window() {
     runtime
         .register_surface(test_surface(2, target_window.as_u64(), "left"))
         .unwrap();
+    let left = runtime.surface_ref(SurfaceId::from_u64(2)).unwrap();
+    let right = runtime.surface_ref(SurfaceId::from_u64(3)).unwrap();
+    ready_surface(&mut runtime, left);
+    ready_surface(&mut runtime, right);
     runtime.enqueue_ui(
         UiInput::new(
             CounterInput::RedrawWindow(target_window),
@@ -2265,12 +2304,9 @@ fn runtime_redraw_window_reports_surfaces_for_that_window() {
         .unwrap(),
     );
 
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
-    assert_eq!(
-        report.redraw_requests(),
-        &[SurfaceId::from_u64(2), SurfaceId::from_u64(3)]
-    );
+    assert_eq!(report.redraw_requests(), &[left, right]);
 }
 
 struct FailingReducer;
@@ -2290,13 +2326,377 @@ fn runtime_turns_recoverable_reducer_errors_into_diagnostics() {
     let mut runtime = Runtime::new(CounterState::default(), FailingReducer);
     runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
 
-    let report = runtime.drain_once(RuntimeBudget::default());
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(runtime.state().value, 0);
     assert_eq!(report.reducer_errors(), 1);
     assert_eq!(
         runtime.diagnostics().count(&DiagnosticCode::REDUCER_ERROR),
         1
+    );
+}
+
+struct ProvenanceFailingReducer {
+    provenance: InputProvenance,
+}
+
+impl Reducer<CounterState, CounterInput> for ProvenanceFailingReducer {
+    fn reduce(
+        &mut self,
+        _state: &CounterState,
+        _input: &AppInput<CounterInput>,
+    ) -> ReducerResult<CounterState> {
+        ReducerResult::recoverable_failure(
+            ReducerFailure::new("counter reducer rejected input")
+                .with_provenance(self.provenance.clone()),
+        )
+    }
+}
+
+#[test]
+fn runtime_reducer_failure_isolated_and_uses_effective_provenance() {
+    let trigger = InputProvenance::system().with_sequence(3);
+    let override_provenance = InputProvenance::system().with_sequence(4);
+    let mut runtime = Runtime::new(
+        CounterState::default(),
+        ProvenanceFailingReducer {
+            provenance: override_provenance.clone(),
+        },
+    );
+    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, trigger).unwrap());
+
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
+
+    assert_eq!(runtime.state(), &CounterState::default());
+    assert_eq!(report.drained_inputs(), 1);
+    assert_eq!(report.reducer_errors(), 1);
+    assert_eq!(report.effect_outcomes(), &[]);
+    assert_eq!(
+        runtime.diagnostics().entries()[0].provenance(),
+        &override_provenance
+    );
+}
+
+#[test]
+fn runtime_changed_commit_invalidates_nonterminal_surfaces_and_redraws_renderable_ones() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let created = runtime
+        .register_surface(test_surface(1, 1, "created"))
+        .unwrap();
+    let ready = runtime
+        .register_surface(test_surface(2, 1, "ready"))
+        .unwrap();
+    let resized = runtime
+        .register_surface(test_surface(3, 1, "resized"))
+        .unwrap();
+    let hidden = runtime
+        .register_surface(test_surface(4, 1, "hidden"))
+        .unwrap();
+    let occluded = runtime
+        .register_surface(test_surface(5, 1, "occluded"))
+        .unwrap();
+    let suspended = runtime
+        .register_surface(test_surface(6, 1, "suspended"))
+        .unwrap();
+    let closing = runtime
+        .register_surface(test_surface(7, 1, "closing"))
+        .unwrap();
+    let closed = runtime
+        .register_surface(test_surface(8, 1, "closed"))
+        .unwrap();
+    let destroyed = runtime
+        .register_surface(test_surface(9, 1, "destroyed"))
+        .unwrap();
+    ready_surface(&mut runtime, ready);
+    runtime
+        .update_surface(resized, |surface| {
+            surface.ready()?;
+            surface.resized()?;
+            Ok(())
+        })
+        .unwrap();
+    runtime
+        .update_surface(hidden, |surface| {
+            surface.ready()?;
+            surface.hidden()?;
+            Ok(())
+        })
+        .unwrap();
+    runtime
+        .update_surface(occluded, |surface| {
+            surface.ready()?;
+            surface.occluded()?;
+            Ok(())
+        })
+        .unwrap();
+    runtime
+        .update_surface(suspended, |surface| {
+            surface.ready()?;
+            surface.suspended()?;
+            Ok(())
+        })
+        .unwrap();
+    runtime
+        .update_surface(closing, |surface| surface.closing().map(|_| ()))
+        .unwrap();
+    runtime
+        .update_surface(closed, |surface| surface.closed().map(|_| ()))
+        .unwrap();
+    runtime
+        .update_surface(destroyed, |surface| surface.destroyed().map(|_| ()))
+        .unwrap();
+    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
+
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
+
+    assert_eq!(report.redraw_requests(), &[ready, resized]);
+    for surface in [created, ready, resized, hidden, occluded, suspended] {
+        assert!(matches!(
+            runtime
+                .surface(surface.surface_id())
+                .unwrap()
+                .invalidations()
+                .last()
+                .map(SurfaceInvalidation::kind),
+            Some(SurfaceInvalidationKind::SnapshotChanged { version })
+                if *version == StateVersion::from_u64(1)
+        ));
+    }
+    for surface in [closing, closed, destroyed] {
+        assert!(
+            runtime
+                .surface(surface.surface_id())
+                .unwrap()
+                .invalidations()
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn runtime_overflow_requeues_the_exact_input_and_returns_prior_work() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface(1, 1, "main"))
+        .unwrap();
+    runtime
+        .update_surface(surface, |surface| {
+            surface.ready()?;
+            surface.set_generations_for_test(0, Some(u64::MAX));
+            Ok(())
+        })
+        .unwrap();
+    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+    let trigger = InputProvenance::system().with_sequence(99);
+    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap());
+
+    let error = runtime.drain_once(RuntimeBudget::default()).unwrap_err();
+
+    assert_eq!(
+        error.code(),
+        RuntimeDrainErrorCode::SurfaceInvalidationOverflow
+    );
+    assert_eq!(error.lane(), RuntimeLane::Ui);
+    assert_eq!(error.provenance(), &trigger);
+    assert_eq!(error.surface(), Some(surface));
+    assert_eq!(error.source(), VersionError::Overflow);
+    assert_eq!(error.partial_report().drained_inputs(), 1);
+    assert_eq!(runtime.state(), &CounterState::default());
+    runtime
+        .update_surface(surface, |surface| {
+            surface.set_generations_for_test(0, None);
+            Ok(())
+        })
+        .unwrap();
+
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
+    assert_eq!(report.drained_inputs(), 1);
+    assert_eq!(runtime.state().value, 1);
+}
+
+#[test]
+fn runtime_state_version_overflow_requeues_without_counting_the_input() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    runtime.set_state_version_for_test(StateVersion::from_u64(u64::MAX));
+    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+    let trigger = InputProvenance::system().with_sequence(100);
+    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap());
+
+    let error = runtime.drain_once(RuntimeBudget::default()).unwrap_err();
+
+    assert_eq!(error.code(), RuntimeDrainErrorCode::StateVersionOverflow);
+    assert_eq!(error.lane(), RuntimeLane::Ui);
+    assert_eq!(error.provenance(), &trigger);
+    assert_eq!(error.surface(), None);
+    assert_eq!(error.partial_report().drained_inputs(), 1);
+    assert_eq!(error.partial_report().applied_effects(), 1);
+    assert_eq!(runtime.state(), &CounterState::default());
+    runtime.set_state_version_for_test(StateVersion::initial());
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::default())
+            .unwrap()
+            .drained_inputs(),
+        1
+    );
+}
+
+struct EffectsReducer {
+    commit: ReducerCommit,
+}
+
+impl Reducer<CounterState, CounterInput> for EffectsReducer {
+    fn reduce(
+        &mut self,
+        _state: &CounterState,
+        _input: &AppInput<CounterInput>,
+    ) -> ReducerResult<CounterState> {
+        ReducerResult::unchanged(self.commit.clone())
+    }
+}
+
+#[test]
+fn runtime_processes_all_effect_dispositions_and_validates_redraw_targets() {
+    let effective_provenance = InputProvenance::system().with_sequence(70);
+    let mut resource = ResourceState::<(), ()>::new(ResourceId::new("thumb:1"));
+    let operation = resource.begin_load().unwrap();
+    let handle = TaskIntentHandle::new(TaskIntentId::from_u64(7), TaskIntentAttemptId::from_u64(2));
+    let service = ServiceId::new("jsonrpc");
+    let effects = EffectBatch::new()
+        .push(AppEffect::diagnostic(Diagnostic::info(
+            DiagnosticCode::QUEUE_COALESCED,
+            "applied diagnostic",
+            InputProvenance::system(),
+        )))
+        .push(AppEffect::service_diagnostic(
+            service.clone(),
+            Diagnostic::info(
+                DiagnosticCode::QUEUE_COALESCED,
+                "applied service diagnostic",
+                InputProvenance::system(),
+            ),
+        ))
+        .push(AppEffect::request_redraw(RedrawTarget::all()))
+        .push(AppEffect::request_redraw(RedrawTarget::surface(
+            surface_ref(1, 0),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::Window(
+            WindowId::from_u64(10),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::surface(
+            surface_ref(1, 1),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::surface(
+            surface_ref(2, 0),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::surface(
+            surface_ref(3, 0),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::surface(
+            surface_ref(99, 0),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::Window(
+            WindowId::from_u64(99),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::Window(
+            WindowId::from_u64(11),
+        )))
+        .push(AppEffect::request_redraw(RedrawTarget::Window(
+            WindowId::from_u64(12),
+        )))
+        .push(AppEffect::persist("session", AppScope::app()))
+        .push(AppEffect::load_resource(operation.clone(), AppScope::app()))
+        .push(AppEffect::invalidate_resource(
+            ResourceId::new("thumb:1"),
+            "source changed",
+        ))
+        .push(AppEffect::start_task(
+            TaskIntentName::new("search"),
+            TaskIntentKey::new("search:rust"),
+            AppScope::app(),
+        ))
+        .push(AppEffect::cancel_task(handle))
+        .push(AppEffect::reprioritize_task(handle, TaskPriorityHint::High))
+        .push(AppEffect::start_service(service.clone()))
+        .push(AppEffect::stop_service(service.clone()))
+        .push(AppEffect::call_service(
+            service,
+            ServiceCommandName::new("textDocument/hover"),
+            ServiceCommandPayload::from_json_text(r#"{"line":3}"#),
+            correlation(42),
+        ));
+    let mut runtime = Runtime::new(
+        CounterState::default(),
+        EffectsReducer {
+            commit: ReducerCommit::new()
+                .with_effects(effects)
+                .with_provenance(effective_provenance.clone()),
+        },
+    );
+    let ready = runtime
+        .register_surface(test_surface(1, 10, "ready"))
+        .unwrap();
+    let _created = runtime
+        .register_surface(test_surface(2, 11, "created"))
+        .unwrap();
+    let terminal = runtime
+        .register_surface(test_surface(3, 12, "terminal"))
+        .unwrap();
+    runtime
+        .update_surface(ready, |surface| surface.ready().map(|_| ()))
+        .unwrap();
+    runtime
+        .update_surface(terminal, |surface| surface.closing().map(|_| ()))
+        .unwrap();
+    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
+
+    assert_eq!(report.applied_effects(), 5);
+    assert_eq!(report.forwarded_effects(), 9);
+    assert_eq!(report.rejected_effects(), 7);
+    assert_eq!(report.effect_outcomes().len(), 21);
+    assert_eq!(report.redraw_requests(), &[ready]);
+    assert_eq!(report.intents().len(), 9);
+    assert!(matches!(
+        &report.intents()[0],
+        RuntimeIntent::Persist(effect) if effect.key() == "session"
+    ));
+    assert!(matches!(
+        &report.intents()[1],
+        RuntimeIntent::LoadResource(effect) if effect.operation() == &operation
+    ));
+    assert!(matches!(
+        &report.intents()[2],
+        RuntimeIntent::InvalidateResource(effect) if effect.reason() == "source changed"
+    ));
+    assert!(matches!(&report.intents()[3], RuntimeIntent::StartTask(_)));
+    assert!(matches!(&report.intents()[4], RuntimeIntent::CancelTask(_)));
+    assert!(matches!(
+        &report.intents()[5],
+        RuntimeIntent::ReprioritizeTask(effect) if effect.priority() == TaskPriorityHint::High
+    ));
+    assert!(matches!(
+        &report.intents()[6],
+        RuntimeIntent::StartService(_)
+    ));
+    assert!(matches!(
+        &report.intents()[7],
+        RuntimeIntent::StopService(_)
+    ));
+    assert!(matches!(
+        &report.intents()[8],
+        RuntimeIntent::CallService(_)
+    ));
+    assert!(
+        report
+            .effect_outcomes()
+            .iter()
+            .all(|outcome| outcome.provenance() == &effective_provenance)
+    );
+    assert_eq!(
+        runtime.diagnostics().count(&DiagnosticCode::EFFECT_FAILED),
+        7
     );
 }
 
@@ -2959,7 +3359,6 @@ fn prototype_log_stream_accumulates_ordered_entries_with_budgeted_draining() {
     app.drain();
 
     assert_eq!(app.log_lines().len(), 10);
-    assert_eq!(app.remaining_task_inputs(), 25);
 
     app.drain_all();
     assert_eq!(app.log_lines().first().unwrap(), "line-00");

@@ -547,13 +547,6 @@ pub struct EffectOutcome {
 }
 
 impl EffectOutcome {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C04-T04 runtime effect processing constructs applied outcomes."
-        )
-    )]
     pub(crate) fn applied(kind: EffectKindId, provenance: InputProvenance) -> Self {
         Self {
             kind,
@@ -564,13 +557,6 @@ impl EffectOutcome {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C04-T04 runtime effect processing constructs forwarded outcomes."
-        )
-    )]
     pub(crate) fn forwarded(
         kind: EffectKindId,
         provenance: InputProvenance,
@@ -585,13 +571,6 @@ impl EffectOutcome {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C04-T04 runtime effect processing constructs rejected outcomes."
-        )
-    )]
     pub(crate) fn rejected(
         kind: EffectKindId,
         provenance: InputProvenance,

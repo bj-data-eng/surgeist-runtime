@@ -69,8 +69,8 @@ pub use resource::{
     ResourceStateError, ResourceStateErrorCode, ResourceStatus,
 };
 pub use runtime::{
-    Runtime, RuntimeBudget, RuntimeDrainError, RuntimeDrainReport, RuntimeInputError, RuntimeLane,
-    RuntimeQueuePolicy, ServiceInput, TaskInput, UiInput,
+    Runtime, RuntimeBudget, RuntimeDrainError, RuntimeDrainErrorCode, RuntimeDrainReport,
+    RuntimeInputError, RuntimeLane, RuntimeQueuePolicy, ServiceInput, TaskInput, UiInput,
 };
 pub use service::{
     MailboxOverflow, MailboxPolicy, MailboxPushOutcome, ServiceCommandName, ServiceCommandPayload,
