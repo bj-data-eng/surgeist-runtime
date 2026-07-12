@@ -392,8 +392,14 @@ impl PrototypeApp {
     fn flush_proxy(&mut self) {
         for input in self.proxy.drain_pending(usize::MAX) {
             match input {
-                ProxyInput::Task(input) => self.runtime.enqueue_task(input),
-                ProxyInput::Service(input) => self.runtime.enqueue_service(input),
+                ProxyInput::Task(input) => self
+                    .runtime
+                    .enqueue_task(input)
+                    .expect("prototype task input should fit the runtime queue"),
+                ProxyInput::Service(input) => self
+                    .runtime
+                    .enqueue_service(input)
+                    .expect("prototype service input should fit the runtime queue"),
             }
         }
     }
@@ -412,11 +418,11 @@ impl PrototypeApp {
     }
 
     fn enqueue_ui(&mut self, input: PrototypeInput) {
-        self.runtime.enqueue_ui(
-            UiInput::new(input, InputProvenance::system()).expect(
+        self.runtime
+            .enqueue_ui(UiInput::new(input, InputProvenance::system()).expect(
                 "prototype setup action should be accepted as deterministic UI/system input",
-            ),
-        );
+            ))
+            .expect("prototype UI input should fit the runtime queue");
     }
 }
 

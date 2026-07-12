@@ -113,52 +113,138 @@ impl RuntimeInputError {
     }
 }
 
+const DEFAULT_UI_QUEUE_CAPACITY: usize = 65_536;
 const DEFAULT_TASK_QUEUE_CAPACITY: usize = 65_536;
 const DEFAULT_SERVICE_QUEUE_CAPACITY: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuntimeQueuePolicy {
-    max_task_inputs: usize,
-    max_service_inputs: usize,
+    ui_capacity: usize,
+    task_capacity: usize,
+    service_capacity: usize,
 }
 
 impl RuntimeQueuePolicy {
+    /// Constructs a policy with the exact capacity of every runtime input lane.
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(ui_capacity: usize, task_capacity: usize, service_capacity: usize) -> Self {
         Self {
-            max_task_inputs: DEFAULT_TASK_QUEUE_CAPACITY,
-            max_service_inputs: DEFAULT_SERVICE_QUEUE_CAPACITY,
+            ui_capacity,
+            task_capacity,
+            service_capacity,
         }
     }
 
+    /// Returns a copy with the UI queue capacity replaced.
     #[must_use]
-    pub const fn max_task_inputs(mut self, capacity: usize) -> Self {
-        self.max_task_inputs = capacity;
+    pub const fn with_ui_capacity(mut self, capacity: usize) -> Self {
+        self.ui_capacity = capacity;
         self
     }
 
+    /// Returns a copy with the task queue capacity replaced.
     #[must_use]
-    pub const fn max_service_inputs(mut self, capacity: usize) -> Self {
-        self.max_service_inputs = capacity;
+    pub const fn with_task_capacity(mut self, capacity: usize) -> Self {
+        self.task_capacity = capacity;
         self
     }
 
+    /// Returns a copy with the service queue capacity replaced.
+    #[must_use]
+    pub const fn with_service_capacity(mut self, capacity: usize) -> Self {
+        self.service_capacity = capacity;
+        self
+    }
+
+    /// Returns the maximum number of queued UI inputs.
+    #[must_use]
+    pub const fn ui_capacity(&self) -> usize {
+        self.ui_capacity
+    }
+
+    /// Returns the maximum number of queued task inputs.
     #[must_use]
     pub const fn task_capacity(&self) -> usize {
-        self.max_task_inputs
+        self.task_capacity
     }
 
+    /// Returns the maximum number of queued service inputs.
     #[must_use]
     pub const fn service_capacity(&self) -> usize {
-        self.max_service_inputs
+        self.service_capacity
     }
 }
 
 impl Default for RuntimeQueuePolicy {
     fn default() -> Self {
-        Self::new()
+        Self::new(
+            DEFAULT_UI_QUEUE_CAPACITY,
+            DEFAULT_TASK_QUEUE_CAPACITY,
+            DEFAULT_SERVICE_QUEUE_CAPACITY,
+        )
     }
 }
+
+/// Identifies why a runtime input could not enter its queue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RuntimeQueueErrorCode {
+    /// The target queue is at its configured capacity.
+    Overflow,
+}
+
+/// A rejected runtime input that remains available for an exact later retry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimeQueueError<T> {
+    code: RuntimeQueueErrorCode,
+    lane: RuntimeLane,
+    capacity: usize,
+    rejected: T,
+}
+
+impl<T> RuntimeQueueError<T> {
+    /// Returns why the input was rejected.
+    #[must_use]
+    pub const fn code(&self) -> RuntimeQueueErrorCode {
+        self.code
+    }
+
+    /// Returns the queue lane that rejected the input.
+    #[must_use]
+    pub const fn lane(&self) -> RuntimeLane {
+        self.lane
+    }
+
+    /// Returns the configured capacity of the rejecting queue.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    /// Returns the exact wrapper that was not enqueued.
+    #[must_use]
+    pub const fn rejected(&self) -> &T {
+        &self.rejected
+    }
+
+    /// Consumes this error and returns the exact wrapper for retry.
+    #[must_use]
+    pub fn into_rejected(self) -> T {
+        self.rejected
+    }
+}
+
+impl<T> fmt::Display for RuntimeQueueError<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "runtime {:?} queue overflow at capacity {}",
+            self.lane, self.capacity
+        )
+    }
+}
+
+impl<T: fmt::Debug> Error for RuntimeQueueError<T> {}
 
 pub struct Runtime<State = (), R = (), Input = ()> {
     state: State,
@@ -175,8 +261,19 @@ pub struct Runtime<State = (), R = (), Input = ()> {
 }
 
 impl<State, R, Input> Runtime<State, R, Input> {
+    /// Constructs a runtime with the default immutable queue policy.
     #[must_use]
     pub fn new(state: State, reducer: R) -> Self {
+        Self::new_with_queue_policy(state, reducer, RuntimeQueuePolicy::default())
+    }
+
+    /// Constructs a runtime with immutable queue capacities.
+    #[must_use]
+    pub fn new_with_queue_policy(
+        state: State,
+        reducer: R,
+        queue_policy: RuntimeQueuePolicy,
+    ) -> Self {
         Self {
             state,
             reducer,
@@ -188,16 +285,11 @@ impl<State, R, Input> Runtime<State, R, Input> {
             ui_queue: VecDeque::new(),
             task_queue: VecDeque::new(),
             service_queue: VecDeque::new(),
-            queue_policy: RuntimeQueuePolicy::default(),
+            queue_policy,
         }
     }
 
-    #[must_use]
-    pub const fn with_queue_policy(mut self, policy: RuntimeQueuePolicy) -> Self {
-        self.queue_policy = policy;
-        self
-    }
-
+    /// Returns the immutable queue policy selected during construction.
     #[must_use]
     pub const fn queue_policy(&self) -> RuntimeQueuePolicy {
         self.queue_policy
@@ -435,51 +527,86 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Ok(self.coordination.unsubscribe(key))
     }
 
-    pub fn enqueue_ui(&mut self, input: UiInput<Input>) {
+    pub fn enqueue_ui(
+        &mut self,
+        input: UiInput<Input>,
+    ) -> Result<(), RuntimeQueueError<UiInput<Input>>> {
+        if self.ui_queue.len() >= self.queue_policy.ui_capacity() {
+            self.record_queue_overflow(
+                RuntimeLane::Ui,
+                self.queue_policy.ui_capacity(),
+                input.input.provenance(),
+            );
+            return Err(RuntimeQueueError {
+                code: RuntimeQueueErrorCode::Overflow,
+                lane: RuntimeLane::Ui,
+                capacity: self.queue_policy.ui_capacity(),
+                rejected: input,
+            });
+        }
         self.ui_queue.push_back(input);
+        Ok(())
     }
 
-    pub fn enqueue_task(&mut self, input: TaskInput<Input>) {
+    pub fn enqueue_task(
+        &mut self,
+        input: TaskInput<Input>,
+    ) -> Result<(), RuntimeQueueError<TaskInput<Input>>> {
         if self.task_queue.len() >= self.queue_policy.task_capacity() {
             self.record_queue_overflow(
                 RuntimeLane::Task,
                 self.queue_policy.task_capacity(),
-                input.input.provenance().clone(),
+                input.input.provenance(),
             );
-            return;
+            return Err(RuntimeQueueError {
+                code: RuntimeQueueErrorCode::Overflow,
+                lane: RuntimeLane::Task,
+                capacity: self.queue_policy.task_capacity(),
+                rejected: input,
+            });
         }
         self.task_queue.push_back(input);
+        Ok(())
     }
 
-    pub fn enqueue_service(&mut self, input: ServiceInput<Input>) {
+    pub fn enqueue_service(
+        &mut self,
+        input: ServiceInput<Input>,
+    ) -> Result<(), RuntimeQueueError<ServiceInput<Input>>> {
         if self.service_queue.len() >= self.queue_policy.service_capacity() {
             self.record_queue_overflow(
                 RuntimeLane::Service,
                 self.queue_policy.service_capacity(),
-                input.input.provenance().clone(),
+                input.input.provenance(),
             );
-            return;
+            return Err(RuntimeQueueError {
+                code: RuntimeQueueErrorCode::Overflow,
+                lane: RuntimeLane::Service,
+                capacity: self.queue_policy.service_capacity(),
+                rejected: input,
+            });
         }
         self.service_queue.push_back(input);
+        Ok(())
     }
 
     fn record_queue_overflow(
         &mut self,
         lane: RuntimeLane,
         capacity: usize,
-        provenance: InputProvenance,
+        provenance: &InputProvenance,
     ) {
         let task = provenance.task_id().zip(provenance.task_attempt_id());
         let service = provenance.service_id();
         let mut diagnostic = Diagnostic::warning(
             DiagnosticCode::QUEUE_OVERFLOW,
             format!(
-                "{} overflow at capacity {capacity}; dropped newest input",
+                "{} overflow at capacity {capacity}; rejected newest input",
                 lane.queue_display_name()
             ),
-            provenance,
+            provenance.clone(),
         )
-        .with_queue(QueueDiagnostic::new(lane.queue_name(), capacity).with_dropped(1));
+        .with_queue(QueueDiagnostic::new(lane.queue_name(), capacity));
 
         if let Some((task_id, attempt_id)) = task {
             diagnostic = diagnostic.with_task(task_id, attempt_id);

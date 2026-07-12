@@ -89,11 +89,11 @@ fn testing_fixtures_are_not_unconditional_public_api() {
 fn app_loop_has_no_host_handler_or_native_loop() {
     let input = UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap();
     let mut expected_runtime = Runtime::new(CounterState::default(), CounterReducer);
-    expected_runtime.enqueue_ui(input.clone());
+    expected_runtime.enqueue_ui(input.clone()).unwrap();
     let expected = expected_runtime.drain_once(RuntimeBudget::new());
 
     let mut app_loop = AppLoop::new(Runtime::new(CounterState::default(), CounterReducer));
-    app_loop.runtime_mut().enqueue_ui(input);
+    app_loop.runtime_mut().enqueue_ui(input).unwrap();
 
     assert_eq!(app_loop.step(RuntimeBudget::new()), expected);
     assert_eq!(app_loop.into_runtime().state().value, 1);
@@ -108,7 +108,8 @@ fn app_loop_delegates_runtime_drain_errors_without_wrapping() {
         .set_state_version_for_test(StateVersion::from_u64(u64::MAX));
     app_loop
         .runtime_mut()
-        .enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap());
+        .enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap())
+        .unwrap();
 
     let error = app_loop.step(RuntimeBudget::new()).unwrap_err();
 
@@ -1177,7 +1178,9 @@ fn runtime_render_state_borrows_runtime_state_and_acknowledges_captured_work() {
     runtime
         .set_scroll_offset(surface, SurfacePoint::new(3, 4))
         .unwrap();
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
     runtime.drain_once(RuntimeBudget::new()).unwrap();
 
     let render_state = runtime.begin_render(surface).unwrap();
@@ -2091,7 +2094,9 @@ fn runtime_commits_state_before_executing_effects() {
     let surface = runtime.surface_ref(SurfaceId::from_u64(1)).unwrap();
     ready_surface(&mut runtime, surface);
 
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(runtime.state().value, 1);
@@ -2103,13 +2108,15 @@ fn runtime_commits_state_before_executing_effects() {
 #[test]
 fn runtime_forwards_task_work_as_intents_without_executing_it() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.enqueue_ui(
-        UiInput::new(
-            CounterInput::StartTask,
-            InputProvenance::ui(surface_ref(1, 0)),
+    runtime
+        .enqueue_ui(
+            UiInput::new(
+                CounterInput::StartTask,
+                InputProvenance::ui(surface_ref(1, 0)),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    );
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::new()).unwrap();
 
@@ -2125,20 +2132,24 @@ fn runtime_forwards_task_work_as_intents_without_executing_it() {
 #[test]
 fn runtime_drains_ui_before_task_events_and_respects_budget() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.enqueue_task(
-        TaskInput::new(
-            CounterInput::Increment,
-            InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
+    runtime
+        .enqueue_task(
+            TaskInput::new(
+                CounterInput::Increment,
+                InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    );
-    runtime.enqueue_ui(
-        UiInput::new(
-            CounterInput::Increment,
-            InputProvenance::ui(surface_ref(1, 0)),
+        .unwrap();
+    runtime
+        .enqueue_ui(
+            UiInput::new(
+                CounterInput::Increment,
+                InputProvenance::ui(surface_ref(1, 0)),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    );
+        .unwrap();
 
     let report = runtime
         .drain_once(RuntimeBudget::new().max_inputs(1))
@@ -2160,16 +2171,18 @@ fn runtime_drains_ui_before_task_events_and_respects_budget() {
 fn runtime_default_budget_caps_drained_inputs() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
     for index in 0..65 {
-        runtime.enqueue_task(
-            TaskInput::new(
-                CounterInput::Increment,
-                InputProvenance::task(
-                    TaskIntentId::from_u64(index),
-                    TaskIntentAttemptId::from_u64(1),
-                ),
+        runtime
+            .enqueue_task(
+                TaskInput::new(
+                    CounterInput::Increment,
+                    InputProvenance::task(
+                        TaskIntentId::from_u64(index),
+                        TaskIntentAttemptId::from_u64(1),
+                    ),
+                )
+                .unwrap(),
             )
-            .unwrap(),
-        );
+            .unwrap();
     }
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
@@ -2186,76 +2199,215 @@ fn runtime_default_budget_caps_drained_inputs() {
 }
 
 #[test]
-fn runtime_task_queue_overflow_records_diagnostic_and_drops_newest() {
-    let mut runtime = Runtime::new(CounterState::default(), CounterReducer)
-        .with_queue_policy(RuntimeQueuePolicy::new().max_task_inputs(2));
-    for index in 0..3 {
-        runtime.enqueue_task(
-            TaskInput::new(
-                CounterInput::Increment,
-                InputProvenance::task(
-                    TaskIntentId::from_u64(index),
-                    TaskIntentAttemptId::from_u64(1),
-                ),
-            )
-            .unwrap(),
-        );
-    }
-
-    let diagnostic = runtime
-        .diagnostics()
-        .entries()
-        .into_iter()
-        .find(|diagnostic| diagnostic.code() == &DiagnosticCode::QUEUE_OVERFLOW)
-        .expect("task queue overflow should emit a diagnostic");
-
-    assert_eq!(diagnostic.queue().unwrap().name(), "runtime.task");
-    assert_eq!(diagnostic.queue().unwrap().capacity(), 2);
-    assert_eq!(diagnostic.queue().unwrap().dropped(), 1);
+fn runtime_queue_policy_defaults_builders_and_new_construction_are_exact() {
+    let default_policy = RuntimeQueuePolicy::default();
     assert_eq!(
-        runtime.diagnostics().count(&DiagnosticCode::QUEUE_OVERFLOW),
-        1
+        default_policy,
+        RuntimeQueuePolicy::new(65_536, 65_536, 65_536)
     );
+    assert_eq!(default_policy.ui_capacity(), 65_536);
+    assert_eq!(default_policy.task_capacity(), 65_536);
+    assert_eq!(default_policy.service_capacity(), 65_536);
 
-    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
+    let custom_policy = RuntimeQueuePolicy::new(1, 2, 3)
+        .with_ui_capacity(4)
+        .with_task_capacity(5)
+        .with_service_capacity(6);
+    assert_eq!(custom_policy.ui_capacity(), 4);
+    assert_eq!(custom_policy.task_capacity(), 5);
+    assert_eq!(custom_policy.service_capacity(), 6);
 
-    assert_eq!(runtime.state().value, 2);
-    assert_eq!(report.drained_inputs(), 2);
+    let default_runtime = Runtime::<CounterState, CounterReducer, CounterInput>::new(
+        CounterState::default(),
+        CounterReducer,
+    );
+    let custom_runtime =
+        Runtime::<CounterState, CounterReducer, CounterInput>::new_with_queue_policy(
+            CounterState::default(),
+            CounterReducer,
+            custom_policy,
+        );
+    assert_eq!(default_runtime.queue_policy(), default_policy);
+    assert_eq!(custom_runtime.queue_policy(), custom_policy);
 }
 
 #[test]
-fn runtime_service_queue_overflow_records_diagnostic_and_drops_newest() {
-    let mut runtime = Runtime::new(CounterState::default(), CounterReducer)
-        .with_queue_policy(RuntimeQueuePolicy::new().max_service_inputs(1));
-    for index in 0..2 {
-        runtime.enqueue_service(
-            ServiceInput::new(
-                CounterInput::Increment,
-                InputProvenance::service(ServiceId::new(format!("service.{index}"))),
-            )
-            .unwrap(),
-        );
-    }
+fn zero_capacity_rejects_each_lane_with_exact_input_and_one_diagnostic() {
+    let policy = RuntimeQueuePolicy::new(0, 0, 0);
+    let mut runtime =
+        Runtime::new_with_queue_policy(CounterState::default(), CounterReducer, policy);
 
-    let diagnostic = runtime
-        .diagnostics()
-        .entries()
-        .into_iter()
-        .find(|diagnostic| diagnostic.code() == &DiagnosticCode::QUEUE_OVERFLOW)
-        .expect("service queue overflow should emit a diagnostic");
+    let ui = UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap();
+    let ui_error = runtime.enqueue_ui(ui.clone()).unwrap_err();
+    assert_eq!(ui_error.code(), RuntimeQueueErrorCode::Overflow);
+    assert_eq!(ui_error.lane(), RuntimeLane::Ui);
+    assert_eq!(ui_error.capacity(), 0);
+    assert_eq!(ui_error.rejected(), &ui);
+    assert_eq!(
+        ui_error.to_string(),
+        "runtime Ui queue overflow at capacity 0"
+    );
+    assert!(std::error::Error::source(&ui_error).is_none());
+    assert_eq!(ui_error.into_rejected(), ui);
 
-    assert_eq!(diagnostic.queue().unwrap().name(), "runtime.service");
-    assert_eq!(diagnostic.queue().unwrap().capacity(), 1);
-    assert_eq!(diagnostic.queue().unwrap().dropped(), 1);
+    let task = TaskInput::new(
+        CounterInput::Increment,
+        InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
+    )
+    .unwrap();
+    let task_error = runtime.enqueue_task(task.clone()).unwrap_err();
+    assert_eq!(task_error.code(), RuntimeQueueErrorCode::Overflow);
+    assert_eq!(task_error.lane(), RuntimeLane::Task);
+    assert_eq!(task_error.capacity(), 0);
+    assert_eq!(task_error.rejected(), &task);
+    assert_eq!(task_error.into_rejected(), task);
+
+    let service = ServiceInput::new(
+        CounterInput::Increment,
+        InputProvenance::service(ServiceId::new("counter")),
+    )
+    .unwrap();
+    let service_error = runtime.enqueue_service(service.clone()).unwrap_err();
+    assert_eq!(service_error.code(), RuntimeQueueErrorCode::Overflow);
+    assert_eq!(service_error.lane(), RuntimeLane::Service);
+    assert_eq!(service_error.capacity(), 0);
+    assert_eq!(service_error.rejected(), &service);
+    assert_eq!(service_error.into_rejected(), service);
+
     assert_eq!(
         runtime.diagnostics().count(&DiagnosticCode::QUEUE_OVERFLOW),
-        1
+        3
+    );
+    let diagnostics = runtime.diagnostics().entries();
+    let diagnostic = diagnostics[0].queue().unwrap();
+    assert_eq!(diagnostic.name(), "runtime.ui");
+    assert_eq!(diagnostic.capacity(), 0);
+    assert_eq!(diagnostic.dropped(), 0);
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::default())
+            .unwrap()
+            .drained_inputs(),
+        0
+    );
+}
+
+#[test]
+fn full_queues_reject_newest_without_reordering_and_allow_exact_retry_after_space() {
+    let mut runtime = Runtime::new_with_queue_policy(
+        QueueState::default(),
+        QueueReducer,
+        RuntimeQueuePolicy::new(1, 2, 1),
     );
 
-    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
+    runtime
+        .enqueue_ui(UiInput::new(QueueInput(10), InputProvenance::system()).unwrap())
+        .unwrap();
+    let rejected_ui = UiInput::new(QueueInput(11), InputProvenance::system()).unwrap();
+    assert_eq!(
+        runtime
+            .enqueue_ui(rejected_ui.clone())
+            .unwrap_err()
+            .into_rejected(),
+        rejected_ui
+    );
 
-    assert_eq!(runtime.state().value, 1);
-    assert_eq!(report.drained_inputs(), 1);
+    runtime
+        .enqueue_task(
+            TaskInput::new(
+                QueueInput(20),
+                InputProvenance::task(TaskIntentId::from_u64(20), TaskIntentAttemptId::from_u64(1)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    runtime
+        .enqueue_task(
+            TaskInput::new(
+                QueueInput(21),
+                InputProvenance::task(TaskIntentId::from_u64(21), TaskIntentAttemptId::from_u64(1)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let rejected_task = TaskInput::new(
+        QueueInput(22),
+        InputProvenance::task(TaskIntentId::from_u64(22), TaskIntentAttemptId::from_u64(1)),
+    )
+    .unwrap();
+    let task_error = runtime.enqueue_task(rejected_task.clone()).unwrap_err();
+    assert_eq!(task_error.code(), RuntimeQueueErrorCode::Overflow);
+    assert_eq!(task_error.lane(), RuntimeLane::Task);
+    assert_eq!(task_error.capacity(), 2);
+    assert_eq!(task_error.rejected(), &rejected_task);
+    let rejected_task = task_error.into_rejected();
+
+    runtime
+        .enqueue_service(
+            ServiceInput::new(
+                QueueInput(30),
+                InputProvenance::service(ServiceId::new("queue")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let rejected_service = ServiceInput::new(
+        QueueInput(31),
+        InputProvenance::service(ServiceId::new("queue")),
+    )
+    .unwrap();
+    assert_eq!(
+        runtime
+            .enqueue_service(rejected_service.clone())
+            .unwrap_err()
+            .into_rejected(),
+        rejected_service
+    );
+
+    assert_eq!(
+        runtime.diagnostics().count(&DiagnosticCode::QUEUE_OVERFLOW),
+        3
+    );
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::default())
+            .unwrap()
+            .drained_inputs(),
+        4
+    );
+    assert_eq!(runtime.state().seen, vec![10, 20, 21, 30]);
+
+    runtime.enqueue_task(rejected_task).unwrap();
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::default())
+            .unwrap()
+            .drained_inputs(),
+        1
+    );
+    assert_eq!(runtime.state().seen, vec![10, 20, 21, 30, 22]);
+}
+
+#[derive(Default)]
+struct QueueState {
+    seen: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct QueueInput(u8);
+
+struct QueueReducer;
+
+impl Reducer<QueueState, QueueInput> for QueueReducer {
+    fn reduce(
+        &mut self,
+        state: &QueueState,
+        input: &AppInput<QueueInput>,
+    ) -> ReducerResult<QueueState> {
+        let mut next = state.seen.clone();
+        next.push(input.payload().0);
+        ReducerResult::changed(QueueState { seen: next }, ReducerCommit::new())
+    }
 }
 
 #[test]
@@ -2271,7 +2423,9 @@ fn runtime_redraw_all_reports_registered_surface_ids() {
     let second = runtime.surface_ref(SurfaceId::from_u64(2)).unwrap();
     ready_surface(&mut runtime, first);
     ready_surface(&mut runtime, second);
-    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap())
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
@@ -2296,13 +2450,15 @@ fn runtime_redraw_window_reports_surfaces_for_that_window() {
     let right = runtime.surface_ref(SurfaceId::from_u64(3)).unwrap();
     ready_surface(&mut runtime, left);
     ready_surface(&mut runtime, right);
-    runtime.enqueue_ui(
-        UiInput::new(
-            CounterInput::RedrawWindow(target_window),
-            InputProvenance::system(),
+    runtime
+        .enqueue_ui(
+            UiInput::new(
+                CounterInput::RedrawWindow(target_window),
+                InputProvenance::system(),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    );
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
@@ -2324,7 +2480,9 @@ impl Reducer<CounterState, CounterInput> for FailingReducer {
 #[test]
 fn runtime_turns_recoverable_reducer_errors_into_diagnostics() {
     let mut runtime = Runtime::new(CounterState::default(), FailingReducer);
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
@@ -2363,7 +2521,9 @@ fn runtime_reducer_failure_isolated_and_uses_effective_provenance() {
             provenance: override_provenance.clone(),
         },
     );
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, trigger).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, trigger).unwrap())
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
@@ -2445,7 +2605,9 @@ fn runtime_changed_commit_invalidates_nonterminal_surfaces_and_redraws_renderabl
     runtime
         .update_surface(destroyed, |surface| surface.destroyed().map(|_| ()))
         .unwrap();
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
@@ -2486,9 +2648,13 @@ fn runtime_overflow_requeues_the_exact_input_and_returns_prior_work() {
             Ok(())
         })
         .unwrap();
-    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap())
+        .unwrap();
     let trigger = InputProvenance::system().with_sequence(99);
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap())
+        .unwrap();
 
     let error = runtime.drain_once(RuntimeBudget::default()).unwrap_err();
 
@@ -2518,9 +2684,13 @@ fn runtime_overflow_requeues_the_exact_input_and_returns_prior_work() {
 fn runtime_state_version_overflow_requeues_without_counting_the_input() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
     runtime.set_state_version_for_test(StateVersion::from_u64(u64::MAX));
-    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap())
+        .unwrap();
     let trigger = InputProvenance::system().with_sequence(100);
-    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap())
+        .unwrap();
 
     let error = runtime.drain_once(RuntimeBudget::default()).unwrap_err();
 
@@ -2648,7 +2818,9 @@ fn runtime_processes_all_effect_dispositions_and_validates_redraw_targets() {
     runtime
         .update_surface(terminal, |surface| surface.closing().map(|_| ()))
         .unwrap();
-    runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap())
+        .unwrap();
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 

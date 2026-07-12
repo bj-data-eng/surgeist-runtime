@@ -70,7 +70,8 @@ pub use resource::{
 };
 pub use runtime::{
     Runtime, RuntimeBudget, RuntimeDrainError, RuntimeDrainErrorCode, RuntimeDrainReport,
-    RuntimeInputError, RuntimeLane, RuntimeQueuePolicy, ServiceInput, TaskInput, UiInput,
+    RuntimeInputError, RuntimeLane, RuntimeQueueError, RuntimeQueueErrorCode, RuntimeQueuePolicy,
+    ServiceInput, TaskInput, UiInput,
 };
 pub use service::{
     MailboxOverflow, MailboxPolicy, MailboxPushOutcome, ServiceCommandName, ServiceCommandPayload,
