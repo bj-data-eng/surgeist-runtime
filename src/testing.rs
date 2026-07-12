@@ -1,14 +1,14 @@
 use std::{
     collections::BTreeMap,
+    num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use super::{
-    AppInput, AppProxy, AppProxyError, AppProxyErrorCode, CorrelationId, InputProvenance,
-    ProxyInput, QueuePolicy, Reducer, ReducerCommit, ReducerResult, Runtime, RuntimeBudget,
-    ServiceId, ServiceInput, ServiceStatus, TaskInput, TaskIntentAttemptId, TaskIntentId, UiInput,
-    WakeBridge,
+    AppInput, AppProxy, CorrelationId, InputProvenance, ProxyInput, QueuePolicy, Reducer,
+    ReducerCommit, ReducerResult, Runtime, RuntimeBudget, ServiceId, ServiceInput, ServiceStatus,
+    TaskInput, TaskIntentAttemptId, TaskIntentId, UiInput, WakeBridge, WakeError,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -37,10 +37,10 @@ impl FakeWakeBridge {
 }
 
 impl WakeBridge for FakeWakeBridge {
-    fn wake(&self) -> Result<(), AppProxyError> {
+    fn wake(&self) -> Result<(), WakeError> {
         let mut state = self.state.lock().expect("fake wake bridge lock");
         if state.closed {
-            return Err(AppProxyError::new(AppProxyErrorCode::WakeFailed));
+            return Err(WakeError::new("fake native wake bridge is closed"));
         }
         state.wakes += 1;
         Ok(())
@@ -390,7 +390,7 @@ impl PrototypeApp {
     }
 
     fn flush_proxy(&mut self) {
-        for input in self.proxy.drain_pending(usize::MAX) {
+        for input in self.proxy.drain_pending(NonZeroUsize::MAX).into_drained() {
             match input {
                 ProxyInput::Task(input) => self
                     .runtime

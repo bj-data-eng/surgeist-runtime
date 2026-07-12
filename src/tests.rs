@@ -1,7 +1,14 @@
 use super::testing::{FakeWakeBridge, HeadlessHarness, PrototypeApp, ServiceRequestStatus};
 use super::*;
 use crate::ids::CheckedNext;
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    error::Error,
+    num::NonZeroUsize,
+    sync::{Arc, Mutex, mpsc},
+    thread,
+    time::Duration,
+};
 
 fn correlation(value: u64) -> CorrelationId {
     CorrelationId::try_from_u64(value).expect("test correlation must be nonzero")
@@ -1928,8 +1935,11 @@ fn app_proxy_coalesces_wakeups_while_queue_is_non_empty() {
     assert_eq!(wake.wake_count(), 1);
     assert_eq!(proxy.pending_len(), 2);
 
-    let drained = proxy.drain_pending(8);
-    assert_eq!(drained.len(), 2);
+    let drained = proxy.drain_pending(NonZeroUsize::new(8).unwrap());
+    assert_eq!(drained.drained().len(), 2);
+    assert_eq!(drained.remaining_len(), 0);
+    assert!(!drained.has_remaining());
+    assert!(drained.continuation_wake_error().is_none());
     assert_eq!(proxy.pending_len(), 0);
 }
 
@@ -1949,6 +1959,319 @@ fn app_proxy_reports_closed_native_wake_bridge() {
         .unwrap_err();
 
     assert_eq!(error.code(), AppProxyErrorCode::WakeFailed);
+    assert_eq!(error.capacity(), None);
+    assert!(error.wake_error().is_some());
+    assert!(Error::source(&error).is_some());
+}
+
+#[test]
+fn app_proxy_policy_errors_and_exact_rejected_inputs_are_lossless() {
+    assert_eq!(QueuePolicy::default(), QueuePolicy::bounded(65_536));
+    assert_eq!(QueuePolicy::bounded(0).capacity(), 0);
+
+    let proxy = AppProxy::<CounterInput>::new(FakeWakeBridge::default(), QueuePolicy::bounded(0));
+    let input = counter_task_input(CounterInput::Increment);
+    let error = proxy.send_task(input.clone()).unwrap_err();
+
+    assert_eq!(error.code(), AppProxyErrorCode::QueueOverflow);
+    assert_eq!(error.capacity(), Some(0));
+    assert_eq!(error.rejected(), &ProxyInput::Task(input.clone()));
+    assert!(error.wake_error().is_none());
+    assert_eq!(error.into_rejected(), ProxyInput::Task(input));
+    assert!(
+        Error::source(
+            &proxy
+                .send_task(counter_task_input(CounterInput::Increment))
+                .unwrap_err()
+        )
+        .is_none()
+    );
+    assert_eq!(proxy.pending_len(), 0);
+}
+
+#[test]
+fn app_proxy_defers_host_drain_until_send_has_returned() {
+    let wake = DeferredWakeBridge::default();
+    let proxy = AppProxy::<CounterInput>::new(wake.clone(), QueuePolicy::bounded(4));
+
+    proxy
+        .send_task(counter_task_input(CounterInput::Increment))
+        .unwrap();
+
+    assert_eq!(wake.wake_count(), 1);
+    assert_eq!(proxy.pending_len(), 1);
+    let report = proxy.drain_pending(NonZeroUsize::new(1).unwrap());
+    assert_eq!(report.into_drained().len(), 1);
+}
+
+#[test]
+fn app_proxy_waiters_retry_after_failed_owner_wake_and_preserve_exact_owner_input() {
+    let (wake, releases, started) = BlockingWakeBridge::new();
+    let proxy = Arc::new(AppProxy::<CounterInput>::new(wake, QueuePolicy::bounded(4)));
+    let owner_input = counter_task_input(CounterInput::Increment);
+    let owner_proxy = Arc::clone(&proxy);
+    let (owner_done_tx, owner_done_rx) = mpsc::channel();
+    let owner_input_for_thread = owner_input.clone();
+    let owner = thread::spawn(move || {
+        owner_done_tx
+            .send(owner_proxy.send_task(owner_input_for_thread))
+            .unwrap();
+    });
+
+    assert_eq!(started.recv_timeout(Duration::from_secs(1)).unwrap(), 1);
+    let waiter_proxy = Arc::clone(&proxy);
+    let (waiter_done_tx, waiter_done_rx) = mpsc::channel();
+    let waiter = thread::spawn(move || {
+        waiter_done_tx
+            .send(waiter_proxy.send_task(counter_task_input(CounterInput::RedrawAll)))
+            .unwrap();
+    });
+
+    assert!(
+        waiter_done_rx
+            .recv_timeout(Duration::from_millis(25))
+            .is_err()
+    );
+    let drain_proxy = Arc::clone(&proxy);
+    let (drain_done_tx, drain_done_rx) = mpsc::channel();
+    let drainer = thread::spawn(move || {
+        drain_done_tx
+            .send(drain_proxy.drain_pending(NonZeroUsize::new(4).unwrap()))
+            .unwrap();
+    });
+    assert!(
+        drain_done_rx
+            .recv_timeout(Duration::from_millis(25))
+            .is_err()
+    );
+
+    releases
+        .send(Err(WakeError::new("first wake failed")))
+        .unwrap();
+    let owner_error = owner_done_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(owner_error.code(), AppProxyErrorCode::WakeFailed);
+    assert_eq!(owner_error.rejected(), &ProxyInput::Task(owner_input));
+    assert_eq!(
+        owner_error.wake_error().unwrap().message(),
+        "first wake failed"
+    );
+
+    assert_eq!(started.recv_timeout(Duration::from_secs(1)).unwrap(), 2);
+    assert!(
+        waiter_done_rx
+            .recv_timeout(Duration::from_millis(25))
+            .is_err()
+    );
+    assert!(
+        drain_done_rx
+            .recv_timeout(Duration::from_millis(25))
+            .is_err()
+    );
+    releases.send(Ok(())).unwrap();
+    assert!(
+        waiter_done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .is_ok()
+    );
+    owner.join().unwrap();
+    waiter.join().unwrap();
+
+    assert_eq!(
+        drain_done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .into_drained()
+            .len(),
+        1
+    );
+    drainer.join().unwrap();
+    assert_eq!(proxy.pending_len(), 0);
+}
+
+#[test]
+fn app_proxy_racing_drain_waits_for_blocked_wake_resolution() {
+    let (wake, releases, started) = BlockingWakeBridge::new();
+    let proxy = Arc::new(AppProxy::<CounterInput>::new(wake, QueuePolicy::bounded(4)));
+    let sender_proxy = Arc::clone(&proxy);
+    let (sender_done_tx, sender_done_rx) = mpsc::channel();
+    let sender = thread::spawn(move || {
+        sender_done_tx
+            .send(sender_proxy.send_task(counter_task_input(CounterInput::Increment)))
+            .unwrap();
+    });
+    assert_eq!(started.recv_timeout(Duration::from_secs(1)).unwrap(), 1);
+
+    let drain_proxy = Arc::clone(&proxy);
+    let (drain_done_tx, drain_done_rx) = mpsc::channel();
+    let drainer = thread::spawn(move || {
+        drain_done_tx
+            .send(drain_proxy.drain_pending(NonZeroUsize::new(4).unwrap()))
+            .unwrap();
+    });
+
+    assert!(
+        drain_done_rx
+            .recv_timeout(Duration::from_millis(25))
+            .is_err()
+    );
+    releases.send(Ok(())).unwrap();
+    assert!(
+        sender_done_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .is_ok()
+    );
+    sender.join().unwrap();
+    let report = drain_done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(report.into_drained().len(), 1);
+    drainer.join().unwrap();
+}
+
+#[test]
+fn app_proxy_partial_drains_signal_successors_and_recover_from_continuation_failure() {
+    let wake = ScriptedWakeBridge::new([Ok(()), Ok(())]);
+    let proxy = AppProxy::<CounterInput>::new(wake.clone(), QueuePolicy::bounded(4));
+    proxy
+        .send_task(counter_task_input(CounterInput::Increment))
+        .unwrap();
+    proxy
+        .send_task(counter_task_input(CounterInput::RedrawAll))
+        .unwrap();
+
+    let report = proxy.drain_pending(NonZeroUsize::new(1).unwrap());
+    assert_eq!(report.drained().len(), 1);
+    assert_eq!(report.remaining_len(), 1);
+    assert!(report.has_remaining());
+    assert!(report.continuation_wake_error().is_none());
+    assert_eq!(wake.wake_count(), 2);
+
+    let failing_wake =
+        ScriptedWakeBridge::new([Ok(()), Err(WakeError::new("continuation failed")), Ok(())]);
+    let recovering = AppProxy::<CounterInput>::new(failing_wake.clone(), QueuePolicy::bounded(4));
+    recovering
+        .send_task(counter_task_input(CounterInput::Increment))
+        .unwrap();
+    recovering
+        .send_task(counter_task_input(CounterInput::RedrawAll))
+        .unwrap();
+    let report = recovering.drain_pending(NonZeroUsize::new(1).unwrap());
+    assert_eq!(report.remaining_len(), 1);
+    assert_eq!(
+        report.continuation_wake_error().unwrap().message(),
+        "continuation failed"
+    );
+    recovering
+        .send_task(counter_task_input(CounterInput::StartTask))
+        .unwrap();
+    assert_eq!(failing_wake.wake_count(), 3);
+    assert_eq!(
+        recovering
+            .drain_pending(NonZeroUsize::MAX)
+            .into_drained()
+            .len(),
+        2
+    );
+}
+
+fn counter_task_input(payload: CounterInput) -> TaskInput<CounterInput> {
+    TaskInput::new(
+        payload,
+        InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
+    )
+    .unwrap()
+}
+
+#[derive(Clone, Default)]
+struct DeferredWakeBridge {
+    wakes: Arc<Mutex<usize>>,
+}
+
+impl DeferredWakeBridge {
+    fn wake_count(&self) -> usize {
+        *self.wakes.lock().unwrap()
+    }
+}
+
+impl WakeBridge for DeferredWakeBridge {
+    fn wake(&self) -> Result<(), WakeError> {
+        *self.wakes.lock().unwrap() += 1;
+        Ok(())
+    }
+}
+
+struct BlockingWakeBridge {
+    wakes: Arc<Mutex<usize>>,
+    started: mpsc::Sender<usize>,
+    releases: Arc<Mutex<mpsc::Receiver<Result<(), WakeError>>>>,
+}
+
+impl BlockingWakeBridge {
+    fn new() -> (
+        Self,
+        mpsc::Sender<Result<(), WakeError>>,
+        mpsc::Receiver<usize>,
+    ) {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        (
+            Self {
+                wakes: Arc::new(Mutex::new(0)),
+                started: started_tx,
+                releases: Arc::new(Mutex::new(release_rx)),
+            },
+            release_tx,
+            started_rx,
+        )
+    }
+}
+
+impl WakeBridge for BlockingWakeBridge {
+    fn wake(&self) -> Result<(), WakeError> {
+        let wake = {
+            let mut wakes = self.wakes.lock().unwrap();
+            *wakes += 1;
+            *wakes
+        };
+        self.started.send(wake).unwrap();
+        self.releases.lock().unwrap().recv().unwrap()
+    }
+}
+
+#[derive(Clone)]
+struct ScriptedWakeBridge {
+    state: Arc<Mutex<ScriptedWakeState>>,
+}
+
+struct ScriptedWakeState {
+    wakes: usize,
+    outcomes: VecDeque<Result<(), WakeError>>,
+}
+
+impl ScriptedWakeBridge {
+    fn new(outcomes: impl IntoIterator<Item = Result<(), WakeError>>) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(ScriptedWakeState {
+                wakes: 0,
+                outcomes: outcomes.into_iter().collect(),
+            })),
+        }
+    }
+
+    fn wake_count(&self) -> usize {
+        self.state.lock().unwrap().wakes
+    }
+}
+
+impl WakeBridge for ScriptedWakeBridge {
+    fn wake(&self) -> Result<(), WakeError> {
+        let mut state = self.state.lock().unwrap();
+        state.wakes += 1;
+        state.outcomes.pop_front().unwrap_or(Ok(()))
+    }
 }
 
 #[test]

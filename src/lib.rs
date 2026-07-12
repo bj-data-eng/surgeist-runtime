@@ -62,7 +62,10 @@ pub use provenance::{
     Correlation, InputOrigin, InputProvenance, InputSourceId, ProvenanceError, ProvenanceErrorCode,
     ServiceProvenance, SurfaceProvenance, TaskProvenance,
 };
-pub use proxy::{AppProxy, AppProxyError, AppProxyErrorCode, ProxyInput, QueuePolicy, WakeBridge};
+pub use proxy::{
+    AppProxy, AppProxyError, AppProxyErrorCode, ProxyDrainReport, ProxyInput, QueuePolicy,
+    WakeBridge, WakeError,
+};
 pub use reducer::{Reducer, ReducerChange, ReducerCommit, ReducerFailure, ReducerResult};
 pub use resource::{
     FailureVisibility, Freshness, ResourceOperation, ResourceSnapshot, ResourceState,
