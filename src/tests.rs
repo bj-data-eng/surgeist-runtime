@@ -1722,8 +1722,8 @@ fn descriptor_names_have_no_unchecked_public_constructors() {
 #[test]
 fn manifest_validation_rejects_duplicates_and_dangling_startup() {
     let duplicate_binding = SnapshotBinding::new(
-        SnapshotBindingId::new("state"),
-        SnapshotSourceType::new("CounterState"),
+        SnapshotBindingId::try_new("state").unwrap(),
+        SnapshotSourceType::try_new("CounterState").unwrap(),
     );
     let duplicate_manifest = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
         .command(CommandDescriptor::try_new("zeta", "ZetaCommand").unwrap())
@@ -1966,6 +1966,257 @@ fn manifest_validation_rejects_root_payload_type_mismatches() {
         error.issues()[1].actual_payload_type().unwrap().as_str(),
         "OtherResult"
     );
+}
+
+fn snapshot_manifest() -> AppManifest {
+    AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0")).root(
+        RootDescriptor::new(RootId::new("main"))
+            .binds_snapshot(snapshot_binding("counter", "CounterState"))
+            .binds_snapshot(snapshot_binding("settings", "SettingsState")),
+    )
+}
+
+fn snapshot_binding(id: &str, source_type: &str) -> SnapshotBinding {
+    SnapshotBinding::new(
+        SnapshotBindingId::try_new(id).unwrap(),
+        SnapshotSourceType::try_new(source_type).unwrap(),
+    )
+}
+
+fn snapshot_entry(id: &str, source_type: &str, value: impl Into<Box<str>>) -> SnapshotEntry {
+    SnapshotEntry::new(
+        snapshot_binding(id, source_type),
+        SnapshotValue::try_new(value).unwrap(),
+    )
+}
+
+fn assert_snapshot_error(
+    error: SnapshotError,
+    code: SnapshotErrorCode,
+    field: &str,
+    root_id: Option<&str>,
+    binding_id: Option<&str>,
+) {
+    let _: &dyn Error = &error;
+    assert_eq!(error.code(), code);
+    assert_eq!(error.field(), field);
+    assert_eq!(error.root_id().map(RootId::as_str), root_id);
+    assert_eq!(
+        error.binding_id().map(SnapshotBindingId::as_str),
+        binding_id
+    );
+    assert!(format!("{error}").contains(field));
+}
+
+#[test]
+fn validated_app_constructs_a_root_bound_snapshot() {
+    let binding_id = SnapshotBindingId::try_new("counter").unwrap();
+    let validated = snapshot_manifest().validate().unwrap();
+    let snapshot = validated
+        .new_snapshot(RootId::new("main"), StateVersion::from_u64(7))
+        .unwrap();
+
+    assert_eq!(snapshot.root_id().as_str(), "main");
+    assert_eq!(snapshot.version(), StateVersion::from_u64(7));
+    assert!(snapshot.entries().is_empty());
+    assert_eq!(
+        snapshot.declaration(&binding_id).unwrap().as_str(),
+        "CounterState"
+    );
+
+    let unknown = validated
+        .new_snapshot(RootId::new("unknown"), StateVersion::initial())
+        .unwrap_err();
+    assert_snapshot_error(
+        unknown,
+        SnapshotErrorCode::UnknownRoot,
+        "snapshot.root_id",
+        Some("unknown"),
+        None,
+    );
+
+    let app = App::try_new(snapshot_manifest()).unwrap();
+    let delegated = app
+        .new_snapshot(RootId::new("main"), StateVersion::initial())
+        .unwrap();
+    assert_eq!(delegated.root_id().as_str(), "main");
+    assert_eq!(
+        delegated.declaration(&binding_id).unwrap().as_str(),
+        "CounterState"
+    );
+
+    let snapshot_source = include_str!("snapshot.rs");
+    assert!(!snapshot_source.contains("pub const fn new(version: StateVersion)"));
+    assert!(!snapshot_source.contains("pub fn new(version: StateVersion)"));
+    assert!(!snapshot_source.contains("pub fn declare"));
+}
+
+#[test]
+fn snapshot_binding_and_value_constructors_reject_invalid_text() {
+    for value in ["", "   "] {
+        assert_snapshot_error(
+            SnapshotBindingId::try_new(value).unwrap_err(),
+            SnapshotErrorCode::EmptyBindingId,
+            "snapshot.binding_id",
+            None,
+            None,
+        );
+        assert_snapshot_error(
+            SnapshotSourceType::try_new(value).unwrap_err(),
+            SnapshotErrorCode::EmptySourceType,
+            "snapshot.source_type",
+            None,
+            None,
+        );
+    }
+    assert_snapshot_error(
+        SnapshotBindingId::try_new("state\u{001f}").unwrap_err(),
+        SnapshotErrorCode::InvalidBindingId,
+        "snapshot.binding_id",
+        None,
+        None,
+    );
+    assert_snapshot_error(
+        SnapshotSourceType::try_new("State\u{001f}").unwrap_err(),
+        SnapshotErrorCode::InvalidSourceType,
+        "snapshot.source_type",
+        None,
+        None,
+    );
+    assert_snapshot_error(
+        SnapshotValue::try_new("").unwrap_err(),
+        SnapshotErrorCode::EmptyValue,
+        "snapshot.value",
+        None,
+        None,
+    );
+    assert_snapshot_error(
+        SnapshotValue::try_new("value\0text").unwrap_err(),
+        SnapshotErrorCode::InvalidValue,
+        "snapshot.value",
+        None,
+        None,
+    );
+
+    assert_eq!(
+        SnapshotBindingId::try_new(" binding ").unwrap().as_str(),
+        " binding "
+    );
+    assert_eq!(
+        SnapshotSourceType::try_new(" State ").unwrap().as_str(),
+        " State "
+    );
+    assert_eq!(
+        SnapshotValue::try_new(String::from(" \topaque\n"))
+            .unwrap()
+            .as_str(),
+        " \topaque\n"
+    );
+    assert_eq!(
+        SnapshotValue::try_new(Box::<str>::from("boxed"))
+            .unwrap()
+            .as_str(),
+        "boxed"
+    );
+}
+
+#[test]
+fn snapshot_accepts_a_valid_binding_and_value() {
+    let mut snapshot = snapshot_manifest()
+        .validate()
+        .unwrap()
+        .new_snapshot(RootId::new("main"), StateVersion::initial())
+        .unwrap();
+    let entry = snapshot_entry("counter", "CounterState", "{\"value\": 1}");
+
+    snapshot.add_entry(entry).unwrap();
+
+    assert_eq!(snapshot.entries().len(), 1);
+    assert_eq!(snapshot.entries()[0].binding().id().as_str(), "counter");
+    assert_eq!(
+        snapshot.entries()[0].binding().source_type().as_str(),
+        "CounterState"
+    );
+    assert_eq!(snapshot.entries()[0].value().as_str(), "{\"value\": 1}");
+}
+
+#[test]
+fn snapshot_rejects_undeclared_and_mismatched_root_bindings_atomically() {
+    let mut snapshot = snapshot_manifest()
+        .validate()
+        .unwrap()
+        .new_snapshot(RootId::new("main"), StateVersion::initial())
+        .unwrap();
+    snapshot
+        .add_entry(snapshot_entry("counter", "CounterState", "one"))
+        .unwrap();
+    let before = snapshot.entries().to_vec();
+
+    let undeclared = snapshot
+        .add_entry(snapshot_entry("other", "OtherState", "two"))
+        .unwrap_err();
+    assert_snapshot_error(
+        undeclared,
+        SnapshotErrorCode::UndeclaredBinding,
+        "snapshot.entries",
+        Some("main"),
+        Some("other"),
+    );
+    assert_eq!(snapshot.entries(), before);
+
+    let mismatch = snapshot
+        .add_entry(snapshot_entry("settings", "OtherState", "three"))
+        .unwrap_err();
+    assert_eq!(
+        mismatch.expected_source_type().unwrap().as_str(),
+        "SettingsState"
+    );
+    assert_eq!(
+        mismatch.actual_source_type().unwrap().as_str(),
+        "OtherState"
+    );
+    assert_snapshot_error(
+        mismatch,
+        SnapshotErrorCode::SourceTypeMismatch,
+        "snapshot.entries",
+        Some("main"),
+        Some("settings"),
+    );
+    assert_eq!(snapshot.entries(), before);
+
+    let duplicate_with_wrong_type = snapshot
+        .add_entry(snapshot_entry("counter", "OtherState", "four"))
+        .unwrap_err();
+    assert_eq!(
+        duplicate_with_wrong_type.code(),
+        SnapshotErrorCode::SourceTypeMismatch
+    );
+    assert_eq!(snapshot.entries(), before);
+}
+
+#[test]
+fn snapshot_entries_reject_duplicate_bindings_atomically() {
+    let mut snapshot = snapshot_manifest()
+        .validate()
+        .unwrap()
+        .new_snapshot(RootId::new("main"), StateVersion::initial())
+        .unwrap();
+    snapshot
+        .add_entry(snapshot_entry("counter", "CounterState", "one"))
+        .unwrap();
+    let before = snapshot.entries().to_vec();
+
+    let duplicate = snapshot
+        .add_entry(snapshot_entry("counter", "CounterState", "two"))
+        .unwrap_err();
+    assert_snapshot_error(
+        duplicate,
+        SnapshotErrorCode::DuplicateBinding,
+        "snapshot.entries",
+        Some("main"),
+        Some("counter"),
+    );
+    assert_eq!(snapshot.entries(), before);
 }
 
 #[test]

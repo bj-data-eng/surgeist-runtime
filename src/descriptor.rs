@@ -5,8 +5,9 @@ use std::{
 };
 
 use super::{
-    AppId, AppScope, CommandDescriptor, CommandName, EventDescriptor, EventName, NameError,
-    PayloadTypeName, ResourceId, RootId, SnapshotBinding, SnapshotBindingId, TaskIntentName,
+    AppId, AppScope, AppSnapshot, CommandDescriptor, CommandName, EventDescriptor, EventName,
+    NameError, PayloadTypeName, ResourceId, RootId, SnapshotBinding, SnapshotBindingId,
+    SnapshotError, StateVersion, TaskIntentName,
 };
 
 /// A runtime application that owns one validated manifest.
@@ -31,6 +32,15 @@ impl App {
     #[must_use]
     pub fn descriptor(&self) -> &AppDescriptor {
         self.manifest().app()
+    }
+
+    /// Creates a snapshot bound to one root declared by this application's manifest.
+    pub fn new_snapshot(
+        &self,
+        root_id: RootId,
+        version: StateVersion,
+    ) -> Result<AppSnapshot, SnapshotError> {
+        self.manifest.new_snapshot(root_id, version)
     }
 }
 
@@ -722,6 +732,23 @@ impl ValidatedAppManifest {
     #[must_use]
     pub fn root(&self, id: &RootId) -> Option<&RootDescriptor> {
         self.roots.get(id)
+    }
+
+    /// Creates a snapshot with a private copy of one validated root's declarations.
+    pub fn new_snapshot(
+        &self,
+        root_id: RootId,
+        version: StateVersion,
+    ) -> Result<AppSnapshot, SnapshotError> {
+        let root = self
+            .roots
+            .get(&root_id)
+            .ok_or_else(|| SnapshotError::unknown_root(root_id.clone()))?;
+        Ok(AppSnapshot::from_declarations(
+            root_id,
+            version,
+            root.snapshot_bindings(),
+        ))
     }
 
     /// Iterates roots in ascending identifier order.

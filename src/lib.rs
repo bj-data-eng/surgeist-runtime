@@ -83,7 +83,8 @@ pub use service::{
     ServiceStatus,
 };
 pub use snapshot::{
-    AppSnapshot, SnapshotBinding, SnapshotBindingId, SnapshotSourceType, StateVersion,
+    AppSnapshot, SnapshotBinding, SnapshotBindingId, SnapshotEntry, SnapshotError,
+    SnapshotErrorCode, SnapshotSourceType, SnapshotValue, StateVersion,
 };
 pub use surface::{
     ElementPhase, ElementRegistration, SurfaceElementRef, SurfaceElements, SurfaceError,
