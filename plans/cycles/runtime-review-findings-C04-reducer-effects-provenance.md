@@ -150,17 +150,17 @@ Intended commit: `feat: define runtime effect outcomes`.
 
 ### C04-T04 - Atomic Runtime Commit And Effect Processing
 
-Files/area: `src/runtime.rs` reduction/drain/effect/redraw; necessary transactional
-invalidation in `src/surface.rs`; fallible-drain propagation in `src/loop_.rs`,
-`src/testing.rs`, and direct tests; exact C04 drain error/report reexports in
-`src/lib.rs`.
+Files/area: `src/runtime.rs` reduction/drain/effects/redraw; transactional support
+in `src/surface.rs`; final outcome-constructor use in `src/effect.rs`; fallible
+propagation in `src/loop_.rs`/`src/testing.rs`/direct tests; exact error/report
+reexports in `src/lib.rs`.
 
-Intended behavior: integrate S4/S5/S13 and final S3/S3A paragraphs: reduce borrowed
-input, derive effective provenance, atomically preflight/install changed state/
-version and nonterminal invalidations, deduplicate redraws, apply diagnostics/
-redraws, forward intents, reject invalid targets, and on overflow restore exact
-input/lane/start state and report prior committed work. Propagate the fallible
-drain result unchanged; leave C05 queue/report composition untouched.
+Intended behavior: integrate S4/S5/S13 and final S3/S3A paragraphs: atomically
+preflight/install changed state/version and nonterminal invalidations; deduplicate
+redraws; call all three outcome constructors and remove only their transitional
+lint expectations; apply diagnostics, forward intents, reject invalid targets; on
+overflow restore exact input/lane/start state and prior-work report; propagate the
+fallible drain unchanged and leave C05 queue/report composition untouched.
 
 RED evidence: first add tests for AppLoop result/error delegation, failure isolation/
 provenance, all dispositions, automatic/explicit redraw validation/deduplication,
@@ -168,9 +168,9 @@ state/surface overflow exact requeue/partial prior-work report, and direct calle
 propagation; record failure.
 
 Acceptance: no failed/overflowing input commits partial state/surface/effects;
-AppLoop/helpers propagate the fallible result without wrapping; successful outcomes
-preserve causality/order; redraws obey registry/lifecycle rules; intents remain
-unchanged; C05 queue/proxy behavior is not implemented early.
+AppLoop/helpers propagate fallibility; all outcome constructors are used and only
+their expectations removed; causality/order/redraws/intents are exact; no effect-
+model redesign or C05 queue/proxy behavior is implemented.
 
 Commands: `cargo test --offline --locked -p surgeist-runtime`; `cargo test
 --offline --locked -p surgeist-runtime --doc`; `cargo clippy --offline --locked
