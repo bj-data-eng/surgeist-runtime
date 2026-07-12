@@ -1720,6 +1720,391 @@ fn descriptor_names_have_no_unchecked_public_constructors() {
 }
 
 #[test]
+fn manifest_validation_rejects_duplicates_and_dangling_startup() {
+    let duplicate_binding = SnapshotBinding::new(
+        SnapshotBindingId::new("state"),
+        SnapshotSourceType::new("CounterState"),
+    );
+    let duplicate_manifest = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .command(CommandDescriptor::try_new("zeta", "ZetaCommand").unwrap())
+        .command(CommandDescriptor::try_new("alpha", "AlphaCommand").unwrap())
+        .command(CommandDescriptor::try_new("zeta", "ZetaCommand").unwrap())
+        .command(CommandDescriptor::try_new("alpha", "AlphaCommand").unwrap())
+        .event(EventDescriptor::try_new("zeta", "ZetaEvent").unwrap())
+        .event(EventDescriptor::try_new("alpha", "AlphaEvent").unwrap())
+        .event(EventDescriptor::try_new("zeta", "ZetaEvent").unwrap())
+        .event(EventDescriptor::try_new("alpha", "AlphaEvent").unwrap())
+        .task(TaskDescriptor::try_new(TaskIntentName::new("zeta"), "ZetaInput").unwrap())
+        .task(TaskDescriptor::try_new(TaskIntentName::new("alpha"), "AlphaInput").unwrap())
+        .task(TaskDescriptor::try_new(TaskIntentName::new("zeta"), "ZetaInput").unwrap())
+        .task(TaskDescriptor::try_new(TaskIntentName::new("alpha"), "AlphaInput").unwrap())
+        .resource(ResourceDescriptor::try_new(ResourceId::new("zeta"), "ZetaValue").unwrap())
+        .resource(ResourceDescriptor::try_new(ResourceId::new("alpha"), "AlphaValue").unwrap())
+        .resource(ResourceDescriptor::try_new(ResourceId::new("zeta"), "ZetaValue").unwrap())
+        .resource(ResourceDescriptor::try_new(ResourceId::new("alpha"), "AlphaValue").unwrap())
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("zeta"),
+            "Zeta",
+        ))
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("alpha"),
+            "Alpha",
+        ))
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("zeta"),
+            "Zeta",
+        ))
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("alpha"),
+            "Alpha",
+        ))
+        .root(
+            RootDescriptor::new(RootId::new("zeta"))
+                .binds_snapshot(duplicate_binding.clone())
+                .binds_snapshot(duplicate_binding),
+        )
+        .root(RootDescriptor::new(RootId::new("alpha")))
+        .root(RootDescriptor::new(RootId::new("zeta")))
+        .root(RootDescriptor::new(RootId::new("alpha")));
+
+    let error = duplicate_manifest.validate().unwrap_err();
+    let _: &dyn Error = &error;
+    assert!(format!("{error}").contains("manifest validation"));
+    assert_eq!(
+        error
+            .issues()
+            .iter()
+            .map(ManifestValidationIssue::code)
+            .collect::<Vec<_>>(),
+        vec![
+            ManifestValidationErrorCode::DuplicateCommand,
+            ManifestValidationErrorCode::DuplicateCommand,
+            ManifestValidationErrorCode::DuplicateEvent,
+            ManifestValidationErrorCode::DuplicateEvent,
+            ManifestValidationErrorCode::DuplicateTask,
+            ManifestValidationErrorCode::DuplicateTask,
+            ManifestValidationErrorCode::DuplicateResource,
+            ManifestValidationErrorCode::DuplicateResource,
+            ManifestValidationErrorCode::DuplicateWindow,
+            ManifestValidationErrorCode::DuplicateWindow,
+            ManifestValidationErrorCode::DuplicateRoot,
+            ManifestValidationErrorCode::DuplicateRoot,
+            ManifestValidationErrorCode::DuplicateRootSnapshotBinding,
+            ManifestValidationErrorCode::MissingStartupRoot,
+        ]
+    );
+    assert_eq!(error.issues()[0].command_name().unwrap().as_str(), "alpha");
+    assert_eq!(error.issues()[1].command_name().unwrap().as_str(), "zeta");
+    assert_eq!(error.issues()[2].event_name().unwrap().as_str(), "alpha");
+    assert_eq!(error.issues()[3].event_name().unwrap().as_str(), "zeta");
+    assert_eq!(error.issues()[8].window_id().unwrap().as_str(), "alpha");
+    assert_eq!(error.issues()[9].window_id().unwrap().as_str(), "zeta");
+    assert_eq!(error.issues()[10].root_id().unwrap().as_str(), "alpha");
+    assert_eq!(error.issues()[11].root_id().unwrap().as_str(), "zeta");
+    assert_eq!(error.issues()[12].root_id().unwrap().as_str(), "zeta");
+    assert_eq!(
+        error.issues()[12].snapshot_binding_id().unwrap().as_str(),
+        "state"
+    );
+
+    let missing_startup = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("main"),
+            "Main",
+        ))
+        .validate()
+        .unwrap_err();
+    assert_eq!(
+        missing_startup.issues()[0].code(),
+        ManifestValidationErrorCode::MissingStartupRoot
+    );
+
+    let dangling_startup = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .window(
+            WindowDescriptor::new(WindowDescriptorId::new("main"), "Main")
+                .allows_root(RootId::new("allowed")),
+        )
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("unrestricted"),
+            "Unrestricted",
+        ))
+        .root(RootDescriptor::new(RootId::new("allowed")))
+        .root(RootDescriptor::new(RootId::new("other-root")))
+        .startup_window(StartupWindow::new(
+            WindowDescriptorId::new("unknown-window"),
+            RootId::new("unknown-root"),
+            AppScope::app(),
+        ))
+        .startup_window(StartupWindow::new(
+            WindowDescriptorId::new("unrestricted"),
+            RootId::new("unknown-root"),
+            AppScope::app(),
+        ))
+        .startup_window(StartupWindow::new(
+            WindowDescriptorId::new("main"),
+            RootId::new("other-root"),
+            AppScope::app(),
+        ))
+        .validate()
+        .unwrap_err();
+    assert_eq!(
+        dangling_startup
+            .issues()
+            .iter()
+            .map(ManifestValidationIssue::code)
+            .collect::<Vec<_>>(),
+        vec![
+            ManifestValidationErrorCode::DisallowedStartupRoot,
+            ManifestValidationErrorCode::UnknownStartupWindow,
+            ManifestValidationErrorCode::UnknownStartupRoot,
+            ManifestValidationErrorCode::UnknownStartupRoot,
+        ]
+    );
+    assert_eq!(
+        dangling_startup.issues()[0].window_id().unwrap().as_str(),
+        "main"
+    );
+    assert_eq!(
+        dangling_startup.issues()[0].root_id().unwrap().as_str(),
+        "other-root"
+    );
+    assert_eq!(
+        dangling_startup.issues()[1].window_id().unwrap().as_str(),
+        "unknown-window"
+    );
+    assert_eq!(
+        dangling_startup.issues()[1].root_id().unwrap().as_str(),
+        "unknown-root"
+    );
+    assert_eq!(
+        dangling_startup.issues()[2].window_id().unwrap().as_str(),
+        "unknown-window"
+    );
+    assert_eq!(
+        dangling_startup.issues()[2].root_id().unwrap().as_str(),
+        "unknown-root"
+    );
+    assert_eq!(
+        dangling_startup.issues()[3].window_id().unwrap().as_str(),
+        "unrestricted"
+    );
+    assert_eq!(
+        dangling_startup.issues()[3].root_id().unwrap().as_str(),
+        "unknown-root"
+    );
+}
+
+#[test]
+fn manifest_validation_rejects_missing_root_commands_and_events() {
+    let error = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .root(
+            RootDescriptor::new(RootId::new("main"))
+                .requires_command(CommandDescriptor::try_new("save", "SaveRequest").unwrap())
+                .emits_event(EventDescriptor::try_new("saved", "SaveResult").unwrap()),
+        )
+        .validate()
+        .unwrap_err();
+
+    assert_eq!(
+        error
+            .issues()
+            .iter()
+            .map(ManifestValidationIssue::code)
+            .collect::<Vec<_>>(),
+        vec![
+            ManifestValidationErrorCode::MissingCommand,
+            ManifestValidationErrorCode::MissingEvent,
+        ]
+    );
+    assert_eq!(error.issues()[0].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[0].command_name().unwrap().as_str(), "save");
+    assert_eq!(error.issues()[1].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[1].event_name().unwrap().as_str(), "saved");
+}
+
+#[test]
+fn manifest_validation_rejects_root_payload_type_mismatches() {
+    let error = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .command(CommandDescriptor::try_new("save", "SaveRequest").unwrap())
+        .event(EventDescriptor::try_new("saved", "SaveResult").unwrap())
+        .root(
+            RootDescriptor::new(RootId::new("main"))
+                .requires_command(CommandDescriptor::try_new("save", "OtherRequest").unwrap())
+                .emits_event(EventDescriptor::try_new("saved", "OtherResult").unwrap()),
+        )
+        .validate()
+        .unwrap_err();
+
+    assert_eq!(
+        error
+            .issues()
+            .iter()
+            .map(ManifestValidationIssue::code)
+            .collect::<Vec<_>>(),
+        vec![
+            ManifestValidationErrorCode::CommandPayloadTypeMismatch,
+            ManifestValidationErrorCode::EventPayloadTypeMismatch,
+        ]
+    );
+    assert_eq!(error.issues()[0].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[0].command_name().unwrap().as_str(), "save");
+    assert_eq!(
+        error.issues()[0].expected_payload_type().unwrap().as_str(),
+        "SaveRequest"
+    );
+    assert_eq!(
+        error.issues()[0].actual_payload_type().unwrap().as_str(),
+        "OtherRequest"
+    );
+    assert_eq!(error.issues()[1].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[1].event_name().unwrap().as_str(), "saved");
+    assert_eq!(
+        error.issues()[1].expected_payload_type().unwrap().as_str(),
+        "SaveResult"
+    );
+    assert_eq!(
+        error.issues()[1].actual_payload_type().unwrap().as_str(),
+        "OtherResult"
+    );
+}
+
+#[test]
+fn validated_manifest_has_deterministic_lookup_iteration_and_app_ownership() {
+    let manifest = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .command(CommandDescriptor::try_new("zeta", "ZetaCommand").unwrap())
+        .command(CommandDescriptor::try_new("alpha", "AlphaCommand").unwrap())
+        .event(EventDescriptor::try_new("zeta", "ZetaEvent").unwrap())
+        .event(EventDescriptor::try_new("alpha", "AlphaEvent").unwrap())
+        .task(TaskDescriptor::try_new(TaskIntentName::new("zeta"), "ZetaInput").unwrap())
+        .task(TaskDescriptor::try_new(TaskIntentName::new("alpha"), "AlphaInput").unwrap())
+        .resource(ResourceDescriptor::try_new(ResourceId::new("zeta"), "ZetaValue").unwrap())
+        .resource(ResourceDescriptor::try_new(ResourceId::new("alpha"), "AlphaValue").unwrap())
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("zeta"),
+            "Zeta",
+        ))
+        .window(WindowDescriptor::new(
+            WindowDescriptorId::new("alpha"),
+            "Alpha",
+        ))
+        .root(RootDescriptor::new(RootId::new("zeta")))
+        .root(RootDescriptor::new(RootId::new("alpha")))
+        .startup_window(StartupWindow::new(
+            WindowDescriptorId::new("zeta"),
+            RootId::new("zeta"),
+            AppScope::app(),
+        ))
+        .startup_window(StartupWindow::new(
+            WindowDescriptorId::new("alpha"),
+            RootId::new("alpha"),
+            AppScope::app(),
+        ));
+
+    let validated = manifest.validate().unwrap();
+    assert_eq!(validated.app().id().as_str(), "photo.lab");
+    assert_eq!(
+        validated
+            .commands()
+            .map(|descriptor| descriptor.name().as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(
+        validated
+            .events()
+            .map(|descriptor| descriptor.name().as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(
+        validated
+            .tasks()
+            .map(|descriptor| descriptor.name().as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(
+        validated
+            .resources()
+            .map(|descriptor| descriptor.id().as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(
+        validated
+            .windows()
+            .map(|descriptor| descriptor.id().as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(
+        validated
+            .roots()
+            .map(|descriptor| descriptor.id().as_str())
+            .collect::<Vec<_>>(),
+        ["alpha", "zeta"]
+    );
+    assert_eq!(
+        validated
+            .startup_windows()
+            .map(|startup| (startup.window_id().as_str(), startup.root_id().as_str()))
+            .collect::<Vec<_>>(),
+        [("alpha", "alpha"), ("zeta", "zeta")]
+    );
+    assert_eq!(
+        validated
+            .command(&CommandName::try_new("alpha").unwrap())
+            .unwrap()
+            .payload_type()
+            .as_str(),
+        "AlphaCommand"
+    );
+    assert_eq!(
+        validated
+            .event(&EventName::try_new("alpha").unwrap())
+            .unwrap()
+            .payload_type()
+            .as_str(),
+        "AlphaEvent"
+    );
+    assert_eq!(
+        validated
+            .task(&TaskIntentName::new("alpha"))
+            .unwrap()
+            .input_type()
+            .as_str(),
+        "AlphaInput"
+    );
+    assert_eq!(
+        validated
+            .resource(&ResourceId::new("alpha"))
+            .unwrap()
+            .value_type()
+            .as_str(),
+        "AlphaValue"
+    );
+    assert_eq!(
+        validated
+            .window(&WindowDescriptorId::new("alpha"))
+            .unwrap()
+            .title(),
+        "Alpha"
+    );
+    assert_eq!(
+        validated.root(&RootId::new("alpha")).unwrap().id().as_str(),
+        "alpha"
+    );
+
+    let app = App::try_new(AppManifest::new(AppDescriptor::new(
+        AppId::new("empty.lab"),
+        "1.0",
+    )))
+    .unwrap();
+    assert_eq!(app.descriptor(), app.manifest().app());
+    assert!(app.manifest().startup_windows().next().is_none());
+}
+
+#[test]
 fn task_input_uses_runtime_intent_provenance() {
     let provenance =
         InputProvenance::task(TaskIntentId::from_u64(9), TaskIntentAttemptId::from_u64(4));

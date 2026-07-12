@@ -38,8 +38,9 @@ pub use coord::{
     SubscriptionPriority, SubscriptionTarget, SubscriptionTargetKindId,
 };
 pub use descriptor::{
-    App, AppDescriptor, AppManifest, ResourceDescriptor, RootDescriptor, StartupWindow,
-    TaskDescriptor, WindowDescriptor, WindowDescriptorId,
+    App, AppDescriptor, AppManifest, ManifestValidationError, ManifestValidationErrorCode,
+    ManifestValidationIssue, ResourceDescriptor, RootDescriptor, StartupWindow, TaskDescriptor,
+    ValidatedAppManifest, WindowDescriptor, WindowDescriptorId,
 };
 pub use diagnostic::{
     Diagnostic, DiagnosticCode, DiagnosticLog, DiagnosticSeverity, QueueDiagnostic,
