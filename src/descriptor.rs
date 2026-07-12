@@ -49,10 +49,9 @@ impl App {
     ///             SnapshotSourceType::try_new("CounterState")?,
     ///         )),
     ///     );
-    /// let app = App::try_new(manifest.clone())?;
-    /// let validated = manifest.validate()?;
+    /// let app = App::try_new(manifest)?;
     ///
-    /// let mut snapshot = validated.new_snapshot(RootId::new("main"), StateVersion::initial())?;
+    /// let mut snapshot = app.new_snapshot(RootId::new("main"), StateVersion::initial())?;
     /// snapshot.add_entry(SnapshotEntry::new(
     ///     SnapshotBinding::new(
     ///         SnapshotBindingId::try_new("counter")?,
