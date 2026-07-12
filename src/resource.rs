@@ -4,30 +4,59 @@ use super::{ResourceGeneration, ResourceId, ResourceOperationId, VersionError};
 use crate::ids::CheckedNext;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// The lifecycle status of a resource-owned value.
+///
+/// `ResourceState` starts [`Idle`](Self::Idle). A load moves it through
+/// [`Loading`](Self::Loading), while a refresh of a retained value moves it
+/// through [`Refreshing`](Self::Refreshing). Completion, failure, cancellation,
+/// and explicit invalidation select the remaining states.
 pub enum ResourceStatus {
+    /// No operation has started yet.
     Idle,
+    /// A load operation is active.
     Loading,
+    /// A current value is available.
     Ready,
+    /// A refresh operation is active for a retained value.
     Refreshing,
+    /// An active operation completed with an error.
     Failed,
+    /// Cancellation has been requested for the active operation.
     Cancelling,
+    /// The active operation acknowledged cancellation.
     Cancelled,
+    /// A retained value was explicitly invalidated.
     Stale,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// Whether a retained resource value is current or stale.
+///
+/// This is meaningful only when [`ResourceState::value`] is present; states
+/// without a value always report [`Fresh`](Self::Fresh).
 pub enum Freshness {
+    /// The retained value is current.
     Fresh,
+    /// The retained value may be displayed but requires refresh.
     Stale,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// Controls whether a failed operation retains its previous value.
 pub enum FailureVisibility {
+    /// Clear the value, stale reason, and stale freshness when recording failure.
     ClearValue,
+    /// Retain a previous value as stale when one exists.
     KeepStaleValue,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// An opaque identity for one operation issued by a [`ResourceState`].
+///
+/// Callers may carry this token to completion or cancellation methods, but can
+/// only obtain it from [`ResourceState::begin_load`] or
+/// [`ResourceState::begin_refresh`]. Its resource ID, operation ID, and
+/// generation must all match the active operation.
 pub struct ResourceOperation {
     resource_id: ResourceId,
     id: ResourceOperationId,
@@ -35,16 +64,19 @@ pub struct ResourceOperation {
 }
 
 impl ResourceOperation {
+    /// Returns the resource this operation belongs to.
     #[must_use]
     pub fn resource_id(&self) -> &ResourceId {
         &self.resource_id
     }
 
+    /// Returns this operation's opaque ID.
     #[must_use]
     pub const fn id(&self) -> ResourceOperationId {
         self.id
     }
 
+    /// Returns the resource generation issued with this operation.
     #[must_use]
     pub const fn generation(&self) -> ResourceGeneration {
         self.generation
@@ -53,16 +85,32 @@ impl ResourceOperation {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
+/// Classifies a rejected resource-state transition.
+///
+/// Token mismatch takes precedence over transition-specific checks. A matching
+/// token then distinguishes cancellation replay from an invalid transition.
 pub enum ResourceStateErrorCode {
+    /// The current status does not allow the requested transition.
     InvalidTransition,
+    /// The supplied token does not match the active operation.
     OperationMismatch,
+    /// A begin request was made while an operation is already active.
     OperationOverlap,
+    /// Cancellation was already requested for the matching active operation.
     CancellationAlreadyRequested,
+    /// Cancellation was replayed after the matching operation was cancelled.
     AlreadyCancelled,
+    /// The next resource generation or operation ID cannot be issued.
     VersionOverflow,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Details of a rejected [`ResourceState`] transition.
+///
+/// The error always identifies the affected resource. Operation mismatch and
+/// cancellation replay errors carry the expected and supplied tokens where
+/// applicable. [`ResourceStateErrorCode::VersionOverflow`] carries
+/// [`VersionError`] as its source; other error codes have no source.
 pub struct ResourceStateError {
     code: ResourceStateErrorCode,
     resource_id: ResourceId,
@@ -97,26 +145,33 @@ impl ResourceStateError {
         }
     }
 
+    /// Returns the semantic reason the transition was rejected.
     #[must_use]
     pub const fn code(&self) -> ResourceStateErrorCode {
         self.code
     }
 
+    /// Returns the resource whose transition was rejected.
     #[must_use]
     pub fn resource_id(&self) -> &ResourceId {
         &self.resource_id
     }
 
+    /// Returns the active or replay token the transition expected, when relevant.
     #[must_use]
     pub fn expected_operation(&self) -> Option<&ResourceOperation> {
         self.expected_operation.as_ref()
     }
 
+    /// Returns the token supplied to the rejected transition, when relevant.
     #[must_use]
     pub fn actual_operation(&self) -> Option<&ResourceOperation> {
         self.actual_operation.as_ref()
     }
 
+    /// Returns the checked-version failure for overflow errors.
+    ///
+    /// This is `Some` only for [`ResourceStateErrorCode::VersionOverflow`].
     #[must_use]
     pub const fn source(&self) -> Option<&VersionError> {
         self.source.as_ref()
@@ -146,6 +201,18 @@ impl Error for ResourceStateError {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Resource value state, its current operation, and its checked generation.
+///
+/// The state starts idle with generation zero. [`Self::begin_load`] is allowed
+/// from idle, failed, and cancelled; [`Self::begin_refresh`] is allowed from
+/// ready and stale. A matching active token may complete, fail, or request
+/// cancellation; only cancellation acknowledgement from cancelling is valid.
+/// [`Self::mark_stale`] is valid from ready or stale, and repeating the same
+/// stale reason is a no-op.
+///
+/// Every successful non-idempotent transition advances the generation exactly
+/// once. Rejected transitions and checked ID or generation overflow are atomic:
+/// they leave every observable field and internal counter unchanged.
 pub struct ResourceState<T, E> {
     id: ResourceId,
     status: ResourceStatus,
@@ -160,6 +227,7 @@ pub struct ResourceState<T, E> {
 }
 
 impl<T, E> ResourceState<T, E> {
+    /// Creates an idle resource with no value, error, or active operation.
     #[must_use]
     pub fn new(id: ResourceId) -> Self {
         Self {
@@ -176,14 +244,26 @@ impl<T, E> ResourceState<T, E> {
         }
     }
 
+    /// Starts a load and returns the operation token required for its outcome.
+    ///
+    /// Valid from idle, failed, and cancelled. An active operation instead
+    /// returns [`ResourceStateErrorCode::OperationOverlap`].
     pub fn begin_load(&mut self) -> Result<ResourceOperation, ResourceStateError> {
         self.begin(ResourceStatus::Loading)
     }
 
+    /// Starts a refresh of a ready or stale resource and returns its token.
+    ///
+    /// A refresh preserves the retained value, freshness, and stale reason while
+    /// clearing any prior error.
     pub fn begin_refresh(&mut self) -> Result<ResourceOperation, ResourceStateError> {
         self.begin(ResourceStatus::Refreshing)
     }
 
+    /// Completes the matching load or refresh with a fresh replacement value.
+    ///
+    /// This clears the error, stale reason, and active token, then enters
+    /// [`ResourceStatus::Ready`].
     pub fn ready(
         &mut self,
         operation: &ResourceOperation,
@@ -208,6 +288,11 @@ impl<T, E> ResourceState<T, E> {
         Ok(())
     }
 
+    /// Completes the matching load or refresh with an error.
+    ///
+    /// [`FailureVisibility`] decides whether a retained value is cleared or
+    /// remains visible as stale. In either case the active token is cleared and
+    /// the state enters [`ResourceStatus::Failed`].
     pub fn failed(
         &mut self,
         operation: &ResourceOperation,
@@ -240,6 +325,11 @@ impl<T, E> ResourceState<T, E> {
         Ok(())
     }
 
+    /// Requests cancellation of the matching active load or refresh.
+    ///
+    /// The operation remains active in [`ResourceStatus::Cancelling`] until
+    /// [`Self::cancelled`] acknowledges it. Repeating this request with the
+    /// matching token returns [`ResourceStateErrorCode::CancellationAlreadyRequested`].
     pub fn cancel(&mut self, operation: &ResourceOperation) -> Result<(), ResourceStateError> {
         self.require_active(operation, true)?;
         match self.status {
@@ -262,6 +352,11 @@ impl<T, E> ResourceState<T, E> {
         Ok(())
     }
 
+    /// Acknowledges cancellation of the matching cancelling operation.
+    ///
+    /// This clears the active token, retains any value as stale, and records the
+    /// token only to classify later cancellation replays as
+    /// [`ResourceStateErrorCode::AlreadyCancelled`].
     pub fn cancelled(&mut self, operation: &ResourceOperation) -> Result<(), ResourceStateError> {
         self.require_active(operation, true)?;
         if self.status != ResourceStatus::Cancelling {
@@ -283,6 +378,10 @@ impl<T, E> ResourceState<T, E> {
         Ok(())
     }
 
+    /// Marks a ready or stale resource value as stale for `reason`.
+    ///
+    /// Repeating the same reason while already stale succeeds without changing
+    /// the generation; a new reason is a normal state transition.
     pub fn mark_stale(&mut self, reason: impl Into<String>) -> Result<(), ResourceStateError> {
         let reason = reason.into();
         match self.status {
@@ -302,46 +401,57 @@ impl<T, E> ResourceState<T, E> {
         Ok(())
     }
 
+    /// Returns this resource's stable identity.
     #[must_use]
     pub fn id(&self) -> &ResourceId {
         &self.id
     }
 
+    /// Returns the current lifecycle status.
     #[must_use]
     pub const fn status(&self) -> ResourceStatus {
         self.status
     }
 
+    /// Returns the retained value, if any.
     #[must_use]
     pub fn value(&self) -> Option<&T> {
         self.value.as_ref()
     }
 
+    /// Returns the most recently recorded failure, if any.
     #[must_use]
     pub fn error(&self) -> Option<&E> {
         self.error.as_ref()
     }
 
+    /// Returns whether a value is available for rendering.
+    ///
+    /// This is exactly equivalent to `value().is_some()` regardless of status.
     #[must_use]
     pub const fn is_renderable(&self) -> bool {
         self.value.is_some()
     }
 
+    /// Returns freshness for the retained value.
     #[must_use]
     pub const fn freshness(&self) -> Freshness {
         self.freshness
     }
 
+    /// Returns explicit invalidation context, not a load or refresh error.
     #[must_use]
     pub fn stale_reason(&self) -> Option<&str> {
         self.stale_reason.as_deref()
     }
 
+    /// Returns the checked generation of the current observable state.
     #[must_use]
     pub const fn generation(&self) -> ResourceGeneration {
         self.generation
     }
 
+    /// Returns the token for the in-flight operation, if one exists.
     #[must_use]
     pub fn active_operation(&self) -> Option<&ResourceOperation> {
         self.active_operation.as_ref()
@@ -448,6 +558,7 @@ impl<T, E> ResourceState<T, E> {
 }
 
 impl<T: Clone, E: Clone> ResourceState<T, E> {
+    /// Clones the resource's observable state into an observer-free snapshot.
     #[must_use]
     pub fn snapshot(&self) -> ResourceSnapshot<T, E> {
         ResourceSnapshot {
@@ -464,6 +575,11 @@ impl<T: Clone, E: Clone> ResourceState<T, E> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// An immutable clone of a resource's observable state at one generation.
+///
+/// A snapshot includes the resource identity, status, value, error, freshness,
+/// stale reason, generation, and active operation. It does not include internal
+/// replay state or observer counts.
 pub struct ResourceSnapshot<T, E> {
     id: ResourceId,
     status: ResourceStatus,
@@ -476,46 +592,57 @@ pub struct ResourceSnapshot<T, E> {
 }
 
 impl<T, E> ResourceSnapshot<T, E> {
+    /// Returns the snapshot's resource identity.
     #[must_use]
     pub fn id(&self) -> &ResourceId {
         &self.id
     }
 
+    /// Returns the captured lifecycle status.
     #[must_use]
     pub const fn status(&self) -> ResourceStatus {
         self.status
     }
 
+    /// Returns the captured retained value, if any.
     #[must_use]
     pub fn value(&self) -> Option<&T> {
         self.value.as_ref()
     }
 
+    /// Returns the captured failure, if any.
     #[must_use]
     pub fn error(&self) -> Option<&E> {
         self.error.as_ref()
     }
 
+    /// Returns whether the snapshot captured a renderable value.
+    ///
+    /// This is exactly equivalent to `value().is_some()`.
     #[must_use]
     pub const fn is_renderable(&self) -> bool {
         self.value.is_some()
     }
 
+    /// Returns freshness captured for the retained value.
     #[must_use]
     pub const fn freshness(&self) -> Freshness {
         self.freshness
     }
 
+    /// Returns captured explicit invalidation context.
     #[must_use]
     pub fn stale_reason(&self) -> Option<&str> {
         self.stale_reason.as_deref()
     }
 
+    /// Returns the generation captured by this snapshot.
     #[must_use]
     pub const fn generation(&self) -> ResourceGeneration {
         self.generation
     }
 
+    /// Returns the operation token captured as active, if any.
     #[must_use]
     pub fn active_operation(&self) -> Option<&ResourceOperation> {
         self.active_operation.as_ref()
