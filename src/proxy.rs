@@ -82,7 +82,15 @@ impl<Input> AppProxy<Input> {
         while matches!(&state.phase, ProxyPhase::Waking(_))
             || (matches!(&state.phase, ProxyPhase::NeedsWake) && state.waiting_senders != 0)
         {
+            #[cfg(test)]
+            {
+                state.waiting_drains += 1;
+            }
             state = self.wait_for_change(state);
+            #[cfg(test)]
+            {
+                state.waiting_drains -= 1;
+            }
         }
 
         if state.queue.is_empty() {
@@ -120,6 +128,16 @@ impl<Input> AppProxy<Input> {
     #[must_use]
     pub fn pending_len(&self) -> usize {
         self.lock_state().queue.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn waiting_sender_count(&self) -> usize {
+        self.lock_state().waiting_senders
+    }
+
+    #[cfg(test)]
+    pub(crate) fn waiting_drain_count(&self) -> usize {
+        self.lock_state().waiting_drains
     }
 
     fn enqueue(&self, input: ProxyInput<Input>) -> Result<(), AppProxyError<Input>> {
@@ -241,6 +259,8 @@ struct ProxyState<Input> {
     queue: VecDeque<QueuedInput<Input>>,
     phase: ProxyPhase,
     waiting_senders: usize,
+    #[cfg(test)]
+    waiting_drains: usize,
 }
 
 impl<Input> ProxyState<Input> {
@@ -266,6 +286,8 @@ impl<Input> Default for ProxyState<Input> {
             queue: VecDeque::new(),
             phase: ProxyPhase::Idle,
             waiting_senders: 0,
+            #[cfg(test)]
+            waiting_drains: 0,
         }
     }
 }
