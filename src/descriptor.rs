@@ -584,11 +584,11 @@ impl AppManifest {
 
         let mut root_index = BTreeMap::new();
         let mut duplicate_roots = Vec::new();
-        for descriptor in roots {
+        for descriptor in &roots {
             let id = descriptor.id().clone();
             match root_index.entry(id) {
                 Entry::Vacant(entry) => {
-                    entry.insert(descriptor);
+                    entry.insert(descriptor.clone());
                 }
                 Entry::Occupied(entry) => {
                     duplicate_roots.push(entry.key().clone());
@@ -601,7 +601,9 @@ impl AppManifest {
                 .with_root_id(root_id)
         }));
 
-        for root in root_index.values() {
+        let mut authored_roots = roots;
+        authored_roots.sort_by(|left, right| left.id().cmp(right.id()));
+        for root in &authored_roots {
             let root_id = root.id().clone();
             let mut bindings = root.snapshot_bindings().iter().collect::<Vec<_>>();
             bindings.sort_by_key(|binding| binding.id());

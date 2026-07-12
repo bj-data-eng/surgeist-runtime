@@ -2044,6 +2044,75 @@ fn manifest_validation_rejects_root_payload_type_mismatches() {
     );
 }
 
+#[test]
+fn manifest_validation_reports_root_local_issues_on_duplicate_roots() {
+    let duplicate_binding = snapshot_binding("state", "CounterState");
+    let error = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+        .command(CommandDescriptor::try_new("save", "SaveRequest").unwrap())
+        .event(EventDescriptor::try_new("saved", "SaveResult").unwrap())
+        .root(RootDescriptor::new(RootId::new("main")))
+        .root(
+            RootDescriptor::new(RootId::new("main"))
+                .binds_snapshot(duplicate_binding.clone())
+                .binds_snapshot(duplicate_binding)
+                .requires_command(CommandDescriptor::try_new("missing", "MissingRequest").unwrap())
+                .requires_command(CommandDescriptor::try_new("save", "OtherRequest").unwrap())
+                .emits_event(EventDescriptor::try_new("missing", "MissingResult").unwrap())
+                .emits_event(EventDescriptor::try_new("saved", "OtherResult").unwrap()),
+        )
+        .validate()
+        .unwrap_err();
+
+    assert_eq!(
+        error
+            .issues()
+            .iter()
+            .map(ManifestValidationIssue::code)
+            .collect::<Vec<_>>(),
+        vec![
+            ManifestValidationErrorCode::DuplicateRoot,
+            ManifestValidationErrorCode::DuplicateRootSnapshotBinding,
+            ManifestValidationErrorCode::MissingCommand,
+            ManifestValidationErrorCode::CommandPayloadTypeMismatch,
+            ManifestValidationErrorCode::MissingEvent,
+            ManifestValidationErrorCode::EventPayloadTypeMismatch,
+        ]
+    );
+    assert_eq!(error.issues()[0].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[1].root_id().unwrap().as_str(), "main");
+    assert_eq!(
+        error.issues()[1].snapshot_binding_id().unwrap().as_str(),
+        "state"
+    );
+    assert_eq!(error.issues()[2].root_id().unwrap().as_str(), "main");
+    assert_eq!(
+        error.issues()[2].command_name().unwrap().as_str(),
+        "missing"
+    );
+    assert_eq!(error.issues()[3].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[3].command_name().unwrap().as_str(), "save");
+    assert_eq!(
+        error.issues()[3].expected_payload_type().unwrap().as_str(),
+        "SaveRequest"
+    );
+    assert_eq!(
+        error.issues()[3].actual_payload_type().unwrap().as_str(),
+        "OtherRequest"
+    );
+    assert_eq!(error.issues()[4].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[4].event_name().unwrap().as_str(), "missing");
+    assert_eq!(error.issues()[5].root_id().unwrap().as_str(), "main");
+    assert_eq!(error.issues()[5].event_name().unwrap().as_str(), "saved");
+    assert_eq!(
+        error.issues()[5].expected_payload_type().unwrap().as_str(),
+        "SaveResult"
+    );
+    assert_eq!(
+        error.issues()[5].actual_payload_type().unwrap().as_str(),
+        "OtherResult"
+    );
+}
+
 fn snapshot_manifest() -> AppManifest {
     AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0")).root(
         RootDescriptor::new(RootId::new("main"))
