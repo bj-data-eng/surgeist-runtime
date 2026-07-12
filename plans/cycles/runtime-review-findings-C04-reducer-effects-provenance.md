@@ -127,17 +127,17 @@ Files/area: `src/effect.rs`, only necessary diagnostic/task value updates in
 `src/diagnostic.rs` and `src/task.rs`, C04 effect reexports in `src/lib.rs`, and
 effect-model tests. Do not edit Runtime.
 
-Intended behavior: implement only backed effect kinds, exact payload constructors,
-`EffectDisposition`, `RuntimeIntent`, `EffectOutcome`, and resource-load operation
-token preservation. Remove timer/window-command and executed-effect vocabulary.
+Intended behavior: implement backed kinds, exact payload constructors,
+`EffectDisposition`, `RuntimeIntent`, `EffectOutcome`, and resource-operation token
+preservation. Remove unsupported kind IDs; T04 replaces Runtime's legacy aggregate.
 
 RED evidence: first add tests for backed/absent kinds, every applied/forwarded/
 rejected value shape, intent payload identity, resource operation preservation,
 and private invariant enforcement; record failure.
 
-Acceptance: every exported effect kind has one specified path; intents preserve
-payloads unchanged; outcome fields cannot represent contradictory disposition;
-unsupported kinds and aggregate executed-effect reporting are absent.
+Acceptance: every effect kind has a path; intents preserve payloads; outcome fields
+cannot contradict disposition; unsupported kind IDs are absent; no new aggregate
+vocabulary is added, while T04 removes the existing Runtime report aggregate.
 
 Commands: `cargo test --offline --locked -p surgeist-runtime`; `cargo test
 --offline --locked -p surgeist-runtime --doc`; `cargo clippy --offline --locked
