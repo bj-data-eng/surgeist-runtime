@@ -83,8 +83,8 @@ pub use snapshot::{
 pub use surface::{
     ElementPhase, ElementRegistration, SurfaceElementRef, SurfaceElements, SurfaceError,
     SurfaceErrorCode, SurfaceInvalidation, SurfaceInvalidationKind, SurfaceLifecycle,
-    SurfaceMutation, SurfacePoint, SurfaceRef, SurfaceRoot, SurfaceRoute, SurfaceRouteStep,
-    SurfaceSize, UiSurface,
+    SurfaceMutation, SurfacePoint, SurfaceRef, SurfaceRenderAck, SurfaceRenderFrame,
+    SurfaceRenderState, SurfaceRoot, SurfaceRoute, SurfaceRouteStep, SurfaceSize, UiSurface,
 };
 pub use task::{
     TaskIntentAttemptId, TaskIntentHandle, TaskIntentId, TaskIntentKey, TaskIntentName,

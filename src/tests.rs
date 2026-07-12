@@ -269,12 +269,14 @@ fn ui_surface_local_mutations_are_idempotent_and_invalidate_changes() {
     assert_eq!(surface.scroll_offset(), SurfacePoint::new(-1, 2));
     assert_eq!(surface.invalidations().len(), 1);
 
+    surface.ready().unwrap();
     assert!(
         surface
             .set_viewport(SurfaceSize::new(640, 480))
             .unwrap()
             .changed()
     );
+    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Resized);
     let reference = surface.element_ref(element).unwrap();
     assert!(surface.set_focus(Some(reference)).unwrap().changed());
     assert!(surface.set_hover(Some(reference)).unwrap().changed());
@@ -326,6 +328,416 @@ fn ui_surface_root_replacement_and_invalidation_overflow_are_atomic() {
     assert_eq!(surface.generation(), SurfaceGeneration::initial());
     assert_eq!(surface.scroll_offset(), SurfacePoint::new(-4, 8));
     assert_eq!(surface.invalidations().len(), invalidation_count);
+}
+
+fn surface_for_lifecycle_tests() -> UiSurface {
+    UiSurface::try_new(
+        SurfaceId::from_u64(31),
+        WindowId::from_u64(41),
+        SurfaceRoot::new(RootId::new("surface")),
+    )
+    .unwrap()
+}
+
+fn surface_in_lifecycle(lifecycle: SurfaceLifecycle) -> UiSurface {
+    let mut surface = surface_for_lifecycle_tests();
+    match lifecycle {
+        SurfaceLifecycle::Created => {}
+        SurfaceLifecycle::Ready => {
+            surface.ready().unwrap();
+        }
+        SurfaceLifecycle::Resized => {
+            surface.ready().unwrap();
+            surface.resized().unwrap();
+        }
+        SurfaceLifecycle::Hidden => {
+            surface.ready().unwrap();
+            surface.hidden().unwrap();
+        }
+        SurfaceLifecycle::Occluded => {
+            surface.ready().unwrap();
+            surface.occluded().unwrap();
+        }
+        SurfaceLifecycle::Suspended => {
+            surface.ready().unwrap();
+            surface.suspended().unwrap();
+        }
+        SurfaceLifecycle::Closing => {
+            surface.closing().unwrap();
+        }
+        SurfaceLifecycle::Closed => {
+            surface.closed().unwrap();
+        }
+        SurfaceLifecycle::Destroyed => {
+            surface.destroyed().unwrap();
+        }
+    }
+    surface
+}
+
+#[test]
+fn surface_lifecycle_accepts_exact_transition_matrix_and_convenience_methods() {
+    let cases = [
+        (
+            SurfaceLifecycle::Created,
+            &[
+                SurfaceLifecycle::Ready,
+                SurfaceLifecycle::Closing,
+                SurfaceLifecycle::Closed,
+                SurfaceLifecycle::Destroyed,
+            ][..],
+        ),
+        (
+            SurfaceLifecycle::Ready,
+            &[
+                SurfaceLifecycle::Resized,
+                SurfaceLifecycle::Hidden,
+                SurfaceLifecycle::Occluded,
+                SurfaceLifecycle::Suspended,
+                SurfaceLifecycle::Closing,
+                SurfaceLifecycle::Closed,
+                SurfaceLifecycle::Destroyed,
+            ][..],
+        ),
+        (
+            SurfaceLifecycle::Resized,
+            &[
+                SurfaceLifecycle::Ready,
+                SurfaceLifecycle::Hidden,
+                SurfaceLifecycle::Occluded,
+                SurfaceLifecycle::Suspended,
+                SurfaceLifecycle::Closing,
+                SurfaceLifecycle::Closed,
+                SurfaceLifecycle::Destroyed,
+            ][..],
+        ),
+        (
+            SurfaceLifecycle::Hidden,
+            &[
+                SurfaceLifecycle::Ready,
+                SurfaceLifecycle::Closing,
+                SurfaceLifecycle::Closed,
+                SurfaceLifecycle::Destroyed,
+            ][..],
+        ),
+        (
+            SurfaceLifecycle::Occluded,
+            &[
+                SurfaceLifecycle::Ready,
+                SurfaceLifecycle::Hidden,
+                SurfaceLifecycle::Suspended,
+                SurfaceLifecycle::Closing,
+                SurfaceLifecycle::Closed,
+                SurfaceLifecycle::Destroyed,
+            ][..],
+        ),
+        (
+            SurfaceLifecycle::Suspended,
+            &[
+                SurfaceLifecycle::Ready,
+                SurfaceLifecycle::Hidden,
+                SurfaceLifecycle::Closing,
+                SurfaceLifecycle::Closed,
+                SurfaceLifecycle::Destroyed,
+            ][..],
+        ),
+        (
+            SurfaceLifecycle::Closing,
+            &[SurfaceLifecycle::Closed, SurfaceLifecycle::Destroyed][..],
+        ),
+        (SurfaceLifecycle::Closed, &[SurfaceLifecycle::Destroyed][..]),
+        (SurfaceLifecycle::Destroyed, &[][..]),
+    ];
+
+    for (current, allowed) in cases {
+        for next in [
+            SurfaceLifecycle::Created,
+            SurfaceLifecycle::Ready,
+            SurfaceLifecycle::Resized,
+            SurfaceLifecycle::Hidden,
+            SurfaceLifecycle::Occluded,
+            SurfaceLifecycle::Suspended,
+            SurfaceLifecycle::Closing,
+            SurfaceLifecycle::Closed,
+            SurfaceLifecycle::Destroyed,
+        ] {
+            let mut surface = surface_in_lifecycle(current);
+
+            if allowed.contains(&next) {
+                assert_eq!(surface.transition_to(next), Ok(next));
+                assert_eq!(surface.lifecycle(), next);
+            } else {
+                assert_eq!(
+                    surface.transition_to(next).unwrap_err().code(),
+                    SurfaceErrorCode::InvalidLifecycleTransition
+                );
+                assert_eq!(surface.lifecycle(), current);
+            }
+        }
+    }
+
+    let mut surface = surface_for_lifecycle_tests();
+    assert_eq!(surface.ready(), Ok(SurfaceLifecycle::Ready));
+    assert_eq!(surface.hidden(), Ok(SurfaceLifecycle::Hidden));
+    assert_eq!(surface.ready(), Ok(SurfaceLifecycle::Ready));
+    assert_eq!(surface.occluded(), Ok(SurfaceLifecycle::Occluded));
+    assert_eq!(surface.suspended(), Ok(SurfaceLifecycle::Suspended));
+    assert_eq!(surface.closing(), Ok(SurfaceLifecycle::Closing));
+    assert_eq!(surface.closed(), Ok(SurfaceLifecycle::Closed));
+    assert_eq!(surface.destroyed(), Ok(SurfaceLifecycle::Destroyed));
+}
+
+#[test]
+fn terminal_surface_rejects_local_mutations_targeting_and_invalidation_without_changes() {
+    for lifecycle in [
+        SurfaceLifecycle::Closing,
+        SurfaceLifecycle::Closed,
+        SurfaceLifecycle::Destroyed,
+    ] {
+        let mut surface = surface_in_lifecycle(lifecycle);
+        let before = (
+            surface.generation(),
+            surface.viewport(),
+            surface.scroll_offset(),
+            surface.focused_element(),
+            surface.hovered_element(),
+            surface.invalidations().to_vec(),
+        );
+
+        for error in [
+            surface
+                .replace_root(SurfaceRoot::new(RootId::new("replacement")))
+                .unwrap_err(),
+            surface.set_viewport(SurfaceSize::default()).unwrap_err(),
+            surface
+                .set_scroll_offset(SurfacePoint::origin())
+                .unwrap_err(),
+            surface.set_focus(None).unwrap_err(),
+            surface.set_hover(None).unwrap_err(),
+            surface
+                .invalidate_snapshot(StateVersion::initial())
+                .unwrap_err(),
+            surface.element_ref(ElementId::from_u64(99)).unwrap_err(),
+        ] {
+            assert_eq!(error.code(), SurfaceErrorCode::TerminalSurface);
+        }
+
+        assert_eq!(
+            (
+                surface.generation(),
+                surface.viewport(),
+                surface.scroll_offset(),
+                surface.focused_element(),
+                surface.hovered_element(),
+                surface.invalidations().to_vec(),
+            ),
+            before
+        );
+    }
+}
+
+#[test]
+fn surface_render_begin_and_ack_enforce_lifecycle_eligibility_without_mutation() {
+    for lifecycle in [
+        SurfaceLifecycle::Created,
+        SurfaceLifecycle::Hidden,
+        SurfaceLifecycle::Occluded,
+        SurfaceLifecycle::Suspended,
+    ] {
+        let mut surface = surface_in_lifecycle(lifecycle);
+        let before = surface.invalidations().to_vec();
+
+        assert_eq!(
+            surface
+                .begin_render(StateVersion::initial())
+                .unwrap_err()
+                .code(),
+            SurfaceErrorCode::InvalidLifecycleTransition
+        );
+        let frame =
+            SurfaceRenderFrame::new_for_test(surface.surface_ref(), StateVersion::initial(), None);
+        assert_eq!(
+            surface.acknowledge_render(frame).unwrap_err().code(),
+            SurfaceErrorCode::InvalidLifecycleTransition
+        );
+        assert_eq!(surface.invalidations(), before);
+    }
+
+    for lifecycle in [
+        SurfaceLifecycle::Closing,
+        SurfaceLifecycle::Closed,
+        SurfaceLifecycle::Destroyed,
+    ] {
+        let mut surface = surface_in_lifecycle(lifecycle);
+        let before = surface.invalidations().to_vec();
+
+        assert_eq!(
+            surface
+                .begin_render(StateVersion::initial())
+                .unwrap_err()
+                .code(),
+            SurfaceErrorCode::TerminalSurface
+        );
+        let frame =
+            SurfaceRenderFrame::new_for_test(surface.surface_ref(), StateVersion::initial(), None);
+        assert_eq!(
+            surface.acknowledge_render(frame).unwrap_err().code(),
+            SurfaceErrorCode::TerminalSurface
+        );
+        assert_eq!(surface.invalidations(), before);
+    }
+}
+
+#[test]
+fn render_ack_rejects_stale_versions_and_replays_without_consuming_new_work() {
+    let mut surface = surface_for_lifecycle_tests();
+    surface.ready().unwrap();
+    surface
+        .invalidate_snapshot(StateVersion::from_u64(2))
+        .unwrap();
+    let frame = surface.begin_render(StateVersion::from_u64(2)).unwrap();
+    let first_ack = surface.acknowledge_render(frame).unwrap();
+    assert_eq!(first_ack.consumed_invalidations(), 1);
+    assert_eq!(first_ack.remaining_invalidations(), 0);
+
+    surface
+        .replace_root(SurfaceRoot::new(RootId::new("replacement")))
+        .unwrap();
+    let replacement_frame = surface.begin_render(StateVersion::from_u64(2)).unwrap();
+    assert_eq!(
+        surface
+            .acknowledge_render(replacement_frame)
+            .unwrap()
+            .consumed_invalidations(),
+        1
+    );
+
+    surface.set_scroll_offset(SurfacePoint::new(3, 4)).unwrap();
+    let replay = surface.acknowledge_render(replacement_frame).unwrap();
+    assert_eq!(replay.consumed_invalidations(), 0);
+    assert_eq!(replay.remaining_invalidations(), 1);
+    assert!(replay.redraw_required());
+
+    let fresh_frame = surface.begin_render(StateVersion::from_u64(2)).unwrap();
+    assert_eq!(
+        surface
+            .acknowledge_render(fresh_frame)
+            .unwrap()
+            .consumed_invalidations(),
+        1
+    );
+
+    let stale =
+        SurfaceRenderFrame::new_for_test(surface.surface_ref(), StateVersion::from_u64(1), None);
+    assert_eq!(
+        surface.acknowledge_render(stale).unwrap_err().code(),
+        SurfaceErrorCode::StaleRenderAck
+    );
+    assert_eq!(surface.invalidations().len(), 0);
+}
+
+#[test]
+fn render_ack_retains_post_begin_and_newer_snapshot_invalidations_with_exact_counts() {
+    let mut surface = surface_for_lifecycle_tests();
+    surface.ready().unwrap();
+    surface.set_scroll_offset(SurfacePoint::new(1, 2)).unwrap();
+    surface
+        .invalidate_snapshot(StateVersion::from_u64(5))
+        .unwrap();
+    let frame = surface.begin_render(StateVersion::from_u64(4)).unwrap();
+
+    surface
+        .invalidate_snapshot(StateVersion::from_u64(6))
+        .unwrap();
+    surface.set_scroll_offset(SurfacePoint::new(3, 4)).unwrap();
+    let ack = surface.acknowledge_render(frame).unwrap();
+
+    assert_eq!(
+        ack.acknowledged_frame_generation(),
+        frame.invalidation_generation()
+    );
+    assert_eq!(ack.consumed_invalidations(), 1);
+    assert_eq!(ack.remaining_invalidations(), 3);
+    assert!(ack.redraw_required());
+    assert_eq!(
+        surface
+            .invalidations()
+            .iter()
+            .map(SurfaceInvalidation::kind)
+            .collect::<Vec<_>>(),
+        vec![
+            &SurfaceInvalidationKind::SnapshotChanged {
+                version: StateVersion::from_u64(5)
+            },
+            &SurfaceInvalidationKind::SnapshotChanged {
+                version: StateVersion::from_u64(6)
+            },
+            &SurfaceInvalidationKind::SurfaceChanged,
+        ]
+    );
+
+    let newer_snapshot_frame = SurfaceRenderFrame::new_for_test(
+        surface.surface_ref(),
+        StateVersion::from_u64(5),
+        surface
+            .invalidations()
+            .last()
+            .map(SurfaceInvalidation::generation),
+    );
+    let newer_snapshot_ack = surface.acknowledge_render(newer_snapshot_frame).unwrap();
+    assert_eq!(newer_snapshot_ack.consumed_invalidations(), 2);
+    assert_eq!(newer_snapshot_ack.remaining_invalidations(), 1);
+    assert!(newer_snapshot_ack.redraw_required());
+}
+
+#[test]
+fn surface_render_values_expose_captured_metadata_and_state_view() {
+    let mut surface = surface_for_lifecycle_tests();
+    surface.ready().unwrap();
+    surface.set_scroll_offset(SurfacePoint::new(3, 4)).unwrap();
+    let frame = surface.begin_render(StateVersion::from_u64(7)).unwrap();
+    let state = "runtime state";
+    let render_state = SurfaceRenderState::new_for_test(&state, frame);
+
+    assert_eq!(render_state.state(), &state);
+    assert_eq!(render_state.frame(), &frame);
+    assert_eq!(render_state.into_frame(), frame);
+    assert_eq!(frame.surface(), surface.surface_ref());
+    assert_eq!(frame.state_version(), StateVersion::from_u64(7));
+    assert_eq!(
+        frame.invalidation_generation(),
+        Some(SurfaceInvalidationGeneration::initial())
+    );
+}
+
+#[test]
+fn terminal_invalidation_overflow_and_render_ack_are_failure_atomic() {
+    let mut surface = surface_for_lifecycle_tests();
+    surface.ready().unwrap();
+    surface.set_scroll_offset(SurfacePoint::new(3, 4)).unwrap();
+    surface.set_generations_for_test(0, Some(u64::MAX));
+    let before = surface.invalidations().to_vec();
+
+    let overflow = surface
+        .invalidate_snapshot(StateVersion::from_u64(9))
+        .unwrap_err();
+    assert_eq!(overflow.code(), SurfaceErrorCode::VersionOverflow);
+    assert!(std::error::Error::source(&overflow).is_some());
+    assert_eq!(surface.invalidations(), before);
+
+    let wrong_surface = SurfaceRenderFrame::new_for_test(
+        SurfaceRef::new(SurfaceId::from_u64(32), SurfaceGeneration::initial()),
+        StateVersion::from_u64(9),
+        None,
+    );
+    assert_eq!(
+        surface
+            .acknowledge_render(wrong_surface)
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::SurfaceMismatch
+    );
+    assert_eq!(surface.invalidations(), before);
 }
 
 fn test_surface(surface_id: u64, window_id: u64, root_id: &str) -> UiSurface {
