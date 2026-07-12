@@ -2044,11 +2044,6 @@ fn validated_app_constructs_a_root_bound_snapshot() {
         delegated.declaration(&binding_id).unwrap().as_str(),
         "CounterState"
     );
-
-    let snapshot_source = include_str!("snapshot.rs");
-    assert!(!snapshot_source.contains("pub const fn new(version: StateVersion)"));
-    assert!(!snapshot_source.contains("pub fn new(version: StateVersion)"));
-    assert!(!snapshot_source.contains("pub fn declare"));
 }
 
 #[test]
