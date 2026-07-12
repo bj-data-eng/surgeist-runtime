@@ -1,22 +1,13 @@
-#![expect(
-    dead_code,
-    reason = "private test fixtures retain reusable scenario helpers across focused tests"
-)]
-
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use super::Freshness;
 use super::{
-    AppEffect, AppInput, AppProxy, AppProxyError, AppProxyErrorCode, CorrelationId, DiagnosticLog,
-    InputProvenance, ProxyInput, QueuePolicy, RedrawTarget, Reducer, ReducerResult, ResourceId,
-    ResourceState, ResourceStateReadyTransition, ResourceStatus, RootId, Runtime, RuntimeBudget,
-    RuntimeDrainReport, RuntimeInputError, ServiceId, ServiceInput, ServiceStatus,
-    SurfaceGeneration, SurfaceId, SurfaceRef, SurfaceRoot, TaskInput, TaskIntentAttemptId,
-    TaskIntentHandle, TaskIntentId, UiInput, UiSurface, WakeBridge, WindowId,
+    AppInput, AppProxy, AppProxyError, AppProxyErrorCode, CorrelationId, InputProvenance,
+    ProxyInput, QueuePolicy, Reducer, ReducerResult, Runtime, RuntimeBudget, ServiceId,
+    ServiceInput, ServiceStatus, TaskInput, TaskIntentAttemptId, TaskIntentId, UiInput, WakeBridge,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -63,11 +54,6 @@ pub struct FakeClock {
 }
 
 impl FakeClock {
-    #[must_use]
-    pub const fn now(&self) -> Duration {
-        self.now
-    }
-
     pub fn advance(&mut self, duration: Duration) {
         self.now += duration;
     }
@@ -107,115 +93,16 @@ struct ScheduledTimer {
     sequence: u64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct FakeWindowBridge {
-    redraws: Vec<SurfaceId>,
-    commands: Vec<FakeWindowCommand>,
-}
-
-impl FakeWindowBridge {
-    pub fn request_redraw(&mut self, surface_id: SurfaceId) {
-        self.redraws.push(surface_id);
-    }
-
-    pub fn record_native_command(&mut self, window_id: WindowId, command: impl Into<String>) {
-        self.commands.push(FakeWindowCommand::Native {
-            window_id,
-            command: command.into(),
-        });
-    }
-
-    #[must_use]
-    pub fn redraws(&self) -> &[SurfaceId] {
-        &self.redraws
-    }
-
-    #[must_use]
-    pub fn commands(&self) -> &[FakeWindowCommand] {
-        &self.commands
-    }
-
-    fn record_open_surface(
-        &mut self,
-        name: impl Into<String>,
-        surface_id: SurfaceId,
-        window_id: WindowId,
-        root_id: RootId,
-    ) {
-        self.commands.push(FakeWindowCommand::OpenSurface {
-            name: name.into(),
-            surface_id,
-            window_id,
-            root_id,
-        });
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FakeWindowCommand {
-    OpenSurface {
-        name: String,
-        surface_id: SurfaceId,
-        window_id: WindowId,
-        root_id: RootId,
-    },
-    Native {
-        window_id: WindowId,
-        command: String,
-    },
-}
-
-pub struct HeadlessHarness<State, R, Input = ()> {
-    runtime: Runtime<State, R, Input>,
-    fake_window: FakeWindowBridge,
+pub struct HeadlessHarness {
     clock: FakeClock,
-    surfaces: BTreeMap<String, SurfaceId>,
-    next_surface_id: u64,
-    next_window_id: u64,
-    last_report: Option<RuntimeDrainReport>,
 }
 
-impl<State, R, Input> HeadlessHarness<State, R, Input>
-where
-    Input: 'static,
-{
+impl HeadlessHarness {
     #[must_use]
-    pub fn new(state: State, reducer: R) -> Self {
-        let runtime = Runtime::new(state, reducer);
-
+    pub fn counter() -> Self {
         Self {
-            runtime,
-            fake_window: FakeWindowBridge::default(),
             clock: FakeClock::default(),
-            surfaces: BTreeMap::new(),
-            next_surface_id: 1,
-            next_window_id: 1,
-            last_report: None,
         }
-    }
-
-    #[must_use]
-    pub const fn runtime(&self) -> &Runtime<State, R, Input> {
-        &self.runtime
-    }
-
-    pub fn runtime_mut(&mut self) -> &mut Runtime<State, R, Input> {
-        &mut self.runtime
-    }
-
-    #[must_use]
-    pub const fn state(&self) -> &State {
-        self.runtime.state()
-    }
-
-    #[must_use]
-    pub const fn fake_window(&self) -> &FakeWindowBridge {
-        &self.fake_window
-    }
-
-    #[must_use]
-    pub const fn clock(&self) -> &FakeClock {
-        &self.clock
     }
 
     pub fn clock_mut(&mut self) -> &mut FakeClock {
@@ -229,396 +116,6 @@ where
     #[must_use]
     pub fn due_timers(&mut self) -> Vec<String> {
         self.clock.drain_due_timers()
-    }
-
-    pub fn open_surface(&mut self, name: impl Into<String>) -> SurfaceId {
-        let name = name.into();
-        if let Some(surface_id) = self.surfaces.get(&name) {
-            return *surface_id;
-        }
-
-        let surface_id = SurfaceId::from_u64(self.next_surface_id);
-        self.next_surface_id += 1;
-        let window_id = WindowId::from_u64(self.next_window_id);
-        self.next_window_id += 1;
-        let root_id = RootId::new(name.clone());
-
-        self.runtime.add_surface(
-            UiSurface::try_new(surface_id, window_id, SurfaceRoot::new(root_id.clone()))
-                .expect("headless surface construction should be valid"),
-        );
-        self.fake_window
-            .record_open_surface(name.clone(), surface_id, window_id, root_id);
-        self.surfaces.insert(name, surface_id);
-        surface_id
-    }
-
-    #[must_use]
-    pub fn surface_id(&self, name: &str) -> SurfaceId {
-        *self
-            .surfaces
-            .get(name)
-            .expect("headless surface should be open")
-    }
-
-    pub fn enqueue_ui(
-        &mut self,
-        input: Input,
-        provenance: InputProvenance,
-    ) -> Result<(), RuntimeInputError> {
-        self.runtime.enqueue_ui(UiInput::new(input, provenance)?);
-        Ok(())
-    }
-
-    #[must_use]
-    pub const fn last_report(&self) -> Option<&RuntimeDrainReport> {
-        self.last_report.as_ref()
-    }
-}
-
-impl<State, R, Input> HeadlessHarness<State, R, Input>
-where
-    R: Reducer<State, Input>,
-    Input: 'static,
-{
-    pub fn drain(&mut self) -> RuntimeDrainReport {
-        let report = self.runtime.drain_once(RuntimeBudget::default());
-        for surface_id in report.redraw_requests() {
-            self.fake_window.request_redraw(*surface_id);
-        }
-        self.last_report = Some(report.clone());
-        report
-    }
-}
-
-impl HeadlessHarness<CounterState, CounterReducer, CounterInput> {
-    #[must_use]
-    pub fn counter() -> Self {
-        Self::new(CounterState::default(), CounterReducer)
-    }
-
-    pub fn input_increment(&mut self) {
-        let surface_id = self.primary_surface_id();
-        self.enqueue_ui(CounterInput::Increment, InputProvenance::ui(surface_id))
-            .expect("counter input should be valid ui input");
-    }
-
-    #[must_use]
-    pub fn counter_value(&self) -> u32 {
-        self.state().value
-    }
-
-    fn primary_surface_id(&self) -> SurfaceId {
-        self.surfaces
-            .values()
-            .next()
-            .copied()
-            .unwrap_or_else(|| SurfaceId::from_u64(1))
-    }
-}
-
-pub struct HeadlessApp;
-
-impl HeadlessApp {
-    #[must_use]
-    pub fn counter() -> CounterApp {
-        CounterApp {
-            harness: HeadlessHarness::counter(),
-        }
-    }
-}
-
-pub struct CounterApp {
-    harness: HeadlessHarness<CounterState, CounterReducer, CounterInput>,
-}
-
-impl CounterApp {
-    pub fn open_surface(&mut self, name: &str) -> SurfaceId {
-        self.harness.open_surface(name)
-    }
-
-    pub fn input_increment(&mut self) {
-        self.harness.input_increment();
-    }
-
-    pub fn drain(&mut self) -> RuntimeDrainReport {
-        self.harness.drain()
-    }
-
-    #[must_use]
-    pub fn counter(&self) -> u32 {
-        self.harness.counter_value()
-    }
-
-    #[must_use]
-    pub fn surface_id(&self, name: &str) -> SurfaceId {
-        self.harness.surface_id(name)
-    }
-
-    #[must_use]
-    pub const fn fake_window(&self) -> &FakeWindowBridge {
-        self.harness.fake_window()
-    }
-}
-
-pub struct ThumbnailImportExample {
-    harness: HeadlessHarness<ThumbnailImportState, ThumbnailImportReducer, ThumbnailImportInput>,
-    proxy: AppProxy<ThumbnailImportInput>,
-    wake: FakeWakeBridge,
-    import_handle: TaskIntentHandle,
-    gallery_surface: SurfaceId,
-    remaining_task_inputs: usize,
-}
-
-impl ThumbnailImportExample {
-    #[must_use]
-    pub fn new() -> Self {
-        let gallery_surface = SurfaceId::from_u64(1);
-        let wake = FakeWakeBridge::default();
-        let proxy = AppProxy::new(wake.clone(), QueuePolicy::bounded(128));
-        let import_handle =
-            TaskIntentHandle::new(THUMBNAIL_IMPORT_TASK_ID, TaskIntentAttemptId::from_u64(1));
-        let mut harness = HeadlessHarness::new(
-            ThumbnailImportState::new(gallery_surface),
-            ThumbnailImportReducer,
-        );
-        harness.open_surface("gallery");
-
-        Self {
-            harness,
-            proxy,
-            wake,
-            import_handle,
-            gallery_surface,
-            remaining_task_inputs: 0,
-        }
-    }
-
-    pub fn choose_folder(&mut self, folder: &str) {
-        self.enqueue_ui(ThumbnailImportInput::FolderChosen {
-            folder: folder.to_owned(),
-        });
-    }
-
-    pub fn drain_once(&mut self) -> RuntimeDrainReport {
-        self.flush_proxy();
-        let report = self.harness.drain();
-        self.remaining_task_inputs = report.remaining_task_inputs();
-        report
-    }
-
-    pub fn drain_all(&mut self) {
-        loop {
-            self.drain_once();
-            if self.proxy.pending_len() == 0 && self.remaining_task_inputs == 0 {
-                break;
-            }
-        }
-    }
-
-    #[must_use]
-    pub fn initial_tile_count(&self) -> usize {
-        self.harness.state().tiles.len()
-    }
-
-    #[must_use]
-    pub fn thumbnail_status(&self, index: usize) -> ResourceStatus {
-        self.harness
-            .state()
-            .tiles
-            .get(index)
-            .expect("thumbnail tile should exist")
-            .status()
-    }
-
-    pub fn finish_thumbnail(&mut self, index: usize) {
-        self.proxy
-            .send_task(
-                TaskInput::new(
-                    ThumbnailImportInput::ThumbnailFinished {
-                        index,
-                        value: format!("thumbnail-{index}"),
-                    },
-                    InputProvenance::task(self.import_handle.id(), self.import_handle.attempt_id()),
-                )
-                .expect("thumbnail completion should be a task input"),
-            )
-            .expect("thumbnail completion should enqueue");
-    }
-
-    pub fn refresh_thumbnail(&mut self, index: usize) {
-        self.enqueue_ui(ThumbnailImportInput::RefreshThumbnail { index });
-    }
-
-    pub fn navigate_away(&mut self) {
-        self.enqueue_ui(ThumbnailImportInput::NavigateAway);
-    }
-
-    #[must_use]
-    pub fn redrawn_surfaces(&self) -> &[SurfaceId] {
-        self.harness.fake_window().redraws()
-    }
-
-    #[must_use]
-    pub const fn gallery_surface(&self) -> SurfaceId {
-        self.gallery_surface
-    }
-
-    #[must_use]
-    pub const fn fake_wake(&self) -> &FakeWakeBridge {
-        &self.wake
-    }
-
-    fn enqueue_ui(&mut self, input: ThumbnailImportInput) {
-        self.harness
-            .enqueue_ui(input, InputProvenance::ui(self.gallery_surface))
-            .expect("thumbnail example input should be valid ui input");
-    }
-
-    fn flush_proxy(&mut self) {
-        for input in self.proxy.drain_pending(usize::MAX) {
-            match input {
-                ProxyInput::Task(input) => self.harness.runtime_mut().enqueue_task(input),
-                ProxyInput::Service(input) => self.harness.runtime_mut().enqueue_service(input),
-            }
-        }
-    }
-}
-
-impl Default for ThumbnailImportExample {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ThumbnailImportState {
-    gallery_surface: SurfaceId,
-    folder: Option<String>,
-    tiles: Vec<ResourceState<String, String>>,
-    observing_gallery: bool,
-}
-
-impl ThumbnailImportState {
-    fn new(gallery_surface: SurfaceId) -> Self {
-        Self {
-            gallery_surface,
-            folder: None,
-            tiles: Vec::new(),
-            observing_gallery: false,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum ThumbnailImportInput {
-    FolderChosen { folder: String },
-    ThumbnailFinished { index: usize, value: String },
-    RefreshThumbnail { index: usize },
-    NavigateAway,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct ThumbnailImportReducer;
-
-impl Reducer<ThumbnailImportState, ThumbnailImportInput> for ThumbnailImportReducer {
-    fn reduce(
-        &mut self,
-        state: &mut ThumbnailImportState,
-        input: AppInput<ThumbnailImportInput>,
-    ) -> ReducerResult {
-        let changed = match input.payload() {
-            ThumbnailImportInput::FolderChosen { folder } => {
-                state.folder = Some(folder.clone());
-                state.observing_gallery = true;
-                state.tiles = initial_thumbnail_tiles(folder);
-                for tile in &mut state.tiles {
-                    tile.starting();
-                    tile.add_observer();
-                }
-                true
-            }
-            ThumbnailImportInput::ThumbnailFinished { index, value } => {
-                if let Some(tile) = state.tiles.get_mut(*index) {
-                    tile.ready(value.clone(), Freshness::Fresh);
-                    true
-                } else {
-                    false
-                }
-            }
-            ThumbnailImportInput::RefreshThumbnail { index } => {
-                if let Some(tile) = state.tiles.get_mut(*index) {
-                    tile.refreshing();
-                    true
-                } else {
-                    false
-                }
-            }
-            ThumbnailImportInput::NavigateAway => {
-                if state.observing_gallery {
-                    state.observing_gallery = false;
-                    for tile in &mut state.tiles {
-                        tile.remove_observer();
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
-        };
-
-        if changed {
-            ReducerResult::changed().with_effect(AppEffect::request_redraw(RedrawTarget::surface(
-                SurfaceRef::new(state.gallery_surface, SurfaceGeneration::initial()),
-            )))
-        } else {
-            ReducerResult::unchanged()
-        }
-    }
-}
-
-fn initial_thumbnail_tiles(folder: &str) -> Vec<ResourceState<String, String>> {
-    (0..3)
-        .map(|index| {
-            ResourceState::idle(ResourceId::new(format!("thumbnail:{folder}:photo-{index}")))
-        })
-        .collect()
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CounterState {
-    value: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CounterInput {
-    Increment,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CounterReducer;
-
-impl Reducer<CounterState, CounterInput> for CounterReducer {
-    fn reduce(
-        &mut self,
-        state: &mut CounterState,
-        input: super::AppInput<CounterInput>,
-    ) -> ReducerResult {
-        match input.payload() {
-            CounterInput::Increment => {
-                state.value += 1;
-                let surface_id = input
-                    .provenance()
-                    .surface_id()
-                    .unwrap_or_else(|| SurfaceId::from_u64(1));
-                ReducerResult::changed().with_effect(AppEffect::request_redraw(
-                    RedrawTarget::surface(SurfaceRef::new(
-                        surface_id,
-                        SurfaceGeneration::initial(),
-                    )),
-                ))
-            }
-        }
     }
 }
 
@@ -639,9 +136,6 @@ pub struct PrototypeApp {
     remaining_task_inputs: usize,
     wake: FakeWakeBridge,
     proxy: AppProxy<PrototypeInput>,
-    surfaces: BTreeMap<String, SurfaceId>,
-    next_surface_id: u64,
-    next_window_id: u64,
     next_request_id: u64,
 }
 
@@ -769,11 +263,6 @@ impl PrototypeApp {
     }
 
     #[must_use]
-    pub const fn diagnostics(&self) -> &DiagnosticLog {
-        self.runtime.diagnostics()
-    }
-
-    #[must_use]
     pub fn log_lines(&self) -> &[String] {
         &self.runtime.state().log_lines
     }
@@ -810,23 +299,6 @@ impl PrototypeApp {
             InputProvenance::task(PROGRESS_TASK_ID, TaskIntentAttemptId::from_u64(1)),
         )
         .expect("prototype progress should be a task input")
-    }
-
-    pub fn open_surface(&mut self, name: &str) -> SurfaceId {
-        if let Some(surface_id) = self.surfaces.get(name) {
-            return *surface_id;
-        }
-
-        let surface_id = SurfaceId::from_u64(self.next_surface_id);
-        self.next_surface_id += 1;
-        let window_id = WindowId::from_u64(self.next_window_id);
-        self.next_window_id += 1;
-        self.runtime.add_surface(
-            UiSurface::try_new(surface_id, window_id, SurfaceRoot::new(RootId::new(name)))
-                .expect("prototype surface construction should be valid"),
-        );
-        self.surfaces.insert(name.to_owned(), surface_id);
-        surface_id
     }
 
     pub fn call_tool(&mut self, _name: &str) -> ServiceRequestId {
@@ -914,9 +386,6 @@ impl PrototypeApp {
             remaining_task_inputs: 0,
             wake,
             proxy,
-            surfaces: BTreeMap::new(),
-            next_surface_id: 1,
-            next_window_id: 1,
             next_request_id: 1,
         }
     }
@@ -1072,7 +541,6 @@ impl Reducer<PrototypeState, PrototypeInput> for PrototypeReducer {
 const SEARCH_TASK_ID: TaskIntentId = TaskIntentId::from_u64(1);
 const LOG_TASK_ID: TaskIntentId = TaskIntentId::from_u64(2);
 const PROGRESS_TASK_ID: TaskIntentId = TaskIntentId::from_u64(3);
-const THUMBNAIL_IMPORT_TASK_ID: TaskIntentId = TaskIntentId::from_u64(5);
 
 fn jsonrpc_service_id() -> ServiceId {
     ServiceId::new("jsonrpc")
