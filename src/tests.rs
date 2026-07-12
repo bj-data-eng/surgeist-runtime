@@ -924,17 +924,55 @@ fn service_registration_exposes_mailbox_policy() {
 }
 
 #[test]
-fn service_mailbox_reports_overflow_and_keeps_capacity() {
+fn service_mailbox_reject_newest_reports_outcomes_and_preserves_fifo() {
+    let policy = MailboxPolicy::bounded(2).observe_overflow();
+    let mut mailbox = ServiceMailbox::<u32>::new(ServiceId::new("rpc"), policy);
+
+    assert_eq!(mailbox.push(1), MailboxPushOutcome::Accepted);
+    assert_eq!(mailbox.push(2), MailboxPushOutcome::Accepted);
+    assert_eq!(mailbox.push(3), MailboxPushOutcome::RejectedNewest(3));
+
+    assert_eq!(mailbox.len(), 2);
+    assert_eq!(mailbox.overflow_count(), 1);
+    assert_eq!(mailbox.drain().collect::<Vec<_>>(), vec![1, 2]);
+}
+
+#[test]
+fn service_mailbox_drop_oldest_reports_outcomes_and_preserves_fifo() {
     let policy = MailboxPolicy::bounded(2).drop_oldest().observe_overflow();
     let mut mailbox = ServiceMailbox::<u32>::new(ServiceId::new("rpc"), policy);
 
-    mailbox.push(1);
-    mailbox.push(2);
-    mailbox.push(3);
+    assert_eq!(mailbox.push(1), MailboxPushOutcome::Accepted);
+    assert_eq!(mailbox.push(2), MailboxPushOutcome::Accepted);
+    assert_eq!(
+        mailbox.push(3),
+        MailboxPushOutcome::DroppedOldest { dropped: 1 }
+    );
 
     assert_eq!(mailbox.len(), 2);
     assert_eq!(mailbox.overflow_count(), 1);
     assert_eq!(mailbox.drain().collect::<Vec<_>>(), vec![2, 3]);
+}
+
+#[test]
+fn service_mailbox_zero_capacity_rejects_newest_without_overflow_tracking() {
+    let mut mailbox = ServiceMailbox::<u32>::new(ServiceId::new("rpc"), MailboxPolicy::bounded(0));
+
+    assert_eq!(mailbox.push(1), MailboxPushOutcome::RejectedNewest(1));
+
+    assert!(mailbox.is_empty());
+    assert_eq!(mailbox.overflow_count(), 0);
+}
+
+#[test]
+fn service_mailbox_zero_capacity_drop_oldest_rejects_newest_and_tracks_overflow() {
+    let policy = MailboxPolicy::bounded(0).drop_oldest().observe_overflow();
+    let mut mailbox = ServiceMailbox::<u32>::new(ServiceId::new("rpc"), policy);
+
+    assert_eq!(mailbox.push(1), MailboxPushOutcome::RejectedNewest(1));
+
+    assert!(mailbox.is_empty());
+    assert_eq!(mailbox.overflow_count(), 1);
 }
 
 #[test]

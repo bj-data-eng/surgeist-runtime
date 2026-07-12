@@ -73,8 +73,9 @@ pub use runtime::{
     RuntimeQueuePolicy, ServiceInput, TaskInput, UiInput,
 };
 pub use service::{
-    MailboxOverflow, MailboxPolicy, ServiceCommandName, ServiceCommandPayload, ServiceMailbox,
-    ServiceRegistration, ServiceRestart, ServiceShutdown, ServiceStartup, ServiceStatus,
+    MailboxOverflow, MailboxPolicy, MailboxPushOutcome, ServiceCommandName, ServiceCommandPayload,
+    ServiceMailbox, ServiceRegistration, ServiceRestart, ServiceShutdown, ServiceStartup,
+    ServiceStatus,
 };
 pub use snapshot::{
     AppSnapshot, SnapshotBinding, SnapshotBindingId, SnapshotSourceType, StateVersion,

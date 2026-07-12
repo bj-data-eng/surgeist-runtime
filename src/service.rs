@@ -30,12 +30,27 @@ pub enum ServiceRestart {
     OnFailure,
 }
 
+/// Specifies how a full service mailbox handles an incoming message.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum MailboxOverflow {
+    /// Keeps the queued messages and rejects the incoming message.
     RejectNewest,
-    DropNewest,
+    /// Removes the oldest queued message and accepts the incoming message.
     DropOldest,
-    CoalesceByKey,
+}
+
+/// Reports the exact result of pushing a message into a service mailbox.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MailboxPushOutcome<T> {
+    /// The message was appended to the mailbox.
+    Accepted,
+    /// The mailbox retained its queued messages and rejected this incoming message.
+    RejectedNewest(T),
+    /// The mailbox evicted its oldest message before accepting the incoming message.
+    DroppedOldest {
+        /// The message removed from the front of the mailbox.
+        dropped: T,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -220,21 +235,31 @@ impl<T: Send + 'static> ServiceMailbox<T> {
         }
     }
 
-    pub fn push(&mut self, message: T) {
+    /// Pushes `message` and reports whether it was accepted, rejected, or replaced an older one.
+    ///
+    /// Accepted messages retain FIFO order. A zero-capacity mailbox always returns
+    /// [`MailboxPushOutcome::RejectedNewest`], including with
+    /// [`MailboxOverflow::DropOldest`].
+    #[must_use]
+    pub fn push(&mut self, message: T) -> MailboxPushOutcome<T> {
         if self.messages.len() < self.policy.capacity() {
             self.messages.push_back(message);
-            return;
+            return MailboxPushOutcome::Accepted;
         }
 
         self.record_overflow();
         match self.policy.overflow() {
-            MailboxOverflow::RejectNewest
-            | MailboxOverflow::DropNewest
-            | MailboxOverflow::CoalesceByKey => {}
+            MailboxOverflow::RejectNewest => MailboxPushOutcome::RejectedNewest(message),
             MailboxOverflow::DropOldest => {
-                if self.policy.capacity() > 0 {
-                    self.messages.pop_front();
+                if self.policy.capacity() == 0 {
+                    MailboxPushOutcome::RejectedNewest(message)
+                } else {
+                    let dropped = self
+                        .messages
+                        .pop_front()
+                        .expect("a full mailbox with nonzero capacity contains a message");
                     self.messages.push_back(message);
+                    MailboxPushOutcome::DroppedOldest { dropped }
                 }
             }
         }
