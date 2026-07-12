@@ -2329,13 +2329,46 @@ fn effect_batches_preserve_order() {
 }
 
 #[test]
+fn locally_applied_effect_payloads_preserve_their_values() {
+    let redraw = AppEffect::request_redraw(RedrawTarget::surface(surface_ref(3, 2)));
+    let persist = AppEffect::persist("session", AppScope::workspace("alpha"));
+    let diagnostic = Diagnostic::warning(
+        DiagnosticCode::QUEUE_COALESCED,
+        "coalesced",
+        InputProvenance::system(),
+    );
+    let diagnostic_effect = AppEffect::diagnostic(diagnostic.clone());
+
+    assert!(matches!(
+        redraw.payload(),
+        AppEffectPayload::RequestRedraw(effect)
+            if effect.target() == &RedrawTarget::surface(surface_ref(3, 2))
+    ));
+    assert!(matches!(
+        persist.payload(),
+        AppEffectPayload::Persist(effect)
+            if effect.key() == "session" && effect.scope() == &AppScope::workspace("alpha")
+    ));
+    assert!(matches!(
+        diagnostic_effect.payload(),
+        AppEffectPayload::Diagnostic(effect) if effect.diagnostic() == &diagnostic
+    ));
+}
+
+#[test]
 fn resource_effects_expose_typed_payloads_and_kinds() {
-    let load = AppEffect::load_resource(ResourceId::new("thumb:1"), AppScope::app());
+    let mut resource = ResourceState::<(), ()>::new(ResourceId::new("thumb:1"));
+    let operation = resource.begin_load().unwrap();
+    let load = AppEffect::load_resource(operation.clone(), AppScope::app());
     assert_eq!(load.kind(), &EffectKindId::LOAD_RESOURCE);
     assert!(matches!(
         load.payload(),
         AppEffectPayload::LoadResource(effect)
-            if effect.id() == &ResourceId::new("thumb:1") && effect.scope() == &AppScope::app()
+            if effect.operation() == &operation
+                && effect.operation().id() == operation.id()
+                && effect.operation().generation() == operation.generation()
+                && effect.id() == &ResourceId::new("thumb:1")
+                && effect.scope() == &AppScope::app()
     ));
 
     let invalidate = AppEffect::invalidate_resource(ResourceId::new("thumb:1"), "source changed");
@@ -2344,6 +2377,208 @@ fn resource_effects_expose_typed_payloads_and_kinds() {
         invalidate.payload(),
         AppEffectPayload::InvalidateResource(effect)
             if effect.id() == &ResourceId::new("thumb:1") && effect.reason() == "source changed"
+    ));
+}
+
+#[test]
+fn effect_kind_ids_cover_only_backed_runtime_paths() {
+    let backed = [
+        EffectKindId::REQUEST_REDRAW,
+        EffectKindId::PERSIST,
+        EffectKindId::EMIT_DIAGNOSTIC,
+        EffectKindId::LOAD_RESOURCE,
+        EffectKindId::INVALIDATE_RESOURCE,
+        EffectKindId::START_TASK,
+        EffectKindId::CANCEL_TASK,
+        EffectKindId::REPRIORITIZE_TASK,
+        EffectKindId::START_SERVICE,
+        EffectKindId::STOP_SERVICE,
+        EffectKindId::CALL_SERVICE,
+        EffectKindId::SERVICE_DIAGNOSTIC,
+    ];
+
+    for (kind, expected) in backed.iter().zip([
+        "runtime.request_redraw",
+        "runtime.persist",
+        "runtime.emit_diagnostic",
+        "runtime.load_resource",
+        "runtime.invalidate_resource",
+        "runtime.start_task",
+        "runtime.cancel_task",
+        "runtime.reprioritize_task",
+        "runtime.start_service",
+        "runtime.stop_service",
+        "runtime.call_service",
+        "runtime.service_diagnostic",
+    ]) {
+        assert_eq!(kind.as_str(), expected);
+    }
+
+    let effect_source = include_str!("effect.rs");
+    assert!(!effect_source.contains("runtime.schedule_timer"));
+    assert!(!effect_source.contains("runtime.window_command"));
+}
+
+#[test]
+fn effect_outcomes_expose_only_their_matching_optional_values() {
+    let provenance = InputProvenance::system().with_correlation(correlation(5));
+    let diagnostic = Diagnostic::error(
+        DiagnosticCode::EFFECT_FAILED,
+        "target is unavailable",
+        provenance.clone(),
+    );
+    let persist = AppEffect::persist("session", AppScope::app());
+    let AppEffectPayload::Persist(persist) = persist.payload().clone() else {
+        panic!("expected persist payload");
+    };
+
+    let applied = EffectOutcome::applied(EffectKindId::REQUEST_REDRAW, provenance.clone());
+    assert_eq!(applied.kind(), &EffectKindId::REQUEST_REDRAW);
+    assert_eq!(applied.disposition(), EffectDisposition::Applied);
+    assert_eq!(applied.provenance(), &provenance);
+    assert_eq!(applied.intent(), None);
+    assert_eq!(applied.diagnostic(), None);
+
+    let forwarded = EffectOutcome::forwarded(
+        EffectKindId::PERSIST,
+        provenance.clone(),
+        RuntimeIntent::Persist(persist.clone()),
+    );
+    assert_eq!(forwarded.kind(), &EffectKindId::PERSIST);
+    assert_eq!(forwarded.disposition(), EffectDisposition::Forwarded);
+    assert_eq!(forwarded.provenance(), &provenance);
+    assert_eq!(
+        forwarded.intent(),
+        Some(&RuntimeIntent::Persist(persist.clone()))
+    );
+    assert_eq!(forwarded.diagnostic(), None);
+
+    let rejected = EffectOutcome::rejected(
+        EffectKindId::REQUEST_REDRAW,
+        provenance.clone(),
+        diagnostic.clone(),
+    );
+    assert_eq!(rejected.kind(), &EffectKindId::REQUEST_REDRAW);
+    assert_eq!(rejected.disposition(), EffectDisposition::Rejected);
+    assert_eq!(rejected.provenance(), &provenance);
+    assert_eq!(rejected.intent(), None);
+    assert_eq!(rejected.diagnostic(), Some(&diagnostic));
+}
+
+#[test]
+fn runtime_intents_preserve_each_owned_effect_payload() {
+    let scope = AppScope::resource(ResourceId::new("thumb:1"));
+    let mut resource = ResourceState::<(), ()>::new(ResourceId::new("thumb:1"));
+    let operation = resource.begin_load().unwrap();
+    let handle = TaskIntentHandle::new(TaskIntentId::from_u64(7), TaskIntentAttemptId::from_u64(2));
+    let service = ServiceId::new("jsonrpc");
+    let effects = [
+        AppEffect::persist("session", scope.clone()),
+        AppEffect::load_resource(operation.clone(), scope.clone()),
+        AppEffect::invalidate_resource(ResourceId::new("thumb:1"), "source changed"),
+        AppEffect::start_task(
+            TaskIntentName::new("search"),
+            TaskIntentKey::new("search:rust"),
+            scope.clone(),
+        ),
+        AppEffect::cancel_task(handle),
+        AppEffect::reprioritize_task(handle, TaskPriorityHint::High),
+        AppEffect::start_service(service.clone()),
+        AppEffect::stop_service(service.clone()),
+        AppEffect::call_service(
+            service,
+            ServiceCommandName::new("textDocument/hover"),
+            ServiceCommandPayload::from_json_text(r#"{"line":3}"#),
+            correlation(42),
+        ),
+    ];
+
+    let intents = effects
+        .each_ref()
+        .map(|effect| match effect.payload().clone() {
+            AppEffectPayload::Persist(payload) => RuntimeIntent::Persist(payload),
+            AppEffectPayload::LoadResource(payload) => RuntimeIntent::LoadResource(payload),
+            AppEffectPayload::InvalidateResource(payload) => {
+                RuntimeIntent::InvalidateResource(payload)
+            }
+            AppEffectPayload::StartTask(payload) => RuntimeIntent::StartTask(payload),
+            AppEffectPayload::CancelTask(payload) => RuntimeIntent::CancelTask(payload),
+            AppEffectPayload::ReprioritizeTask(payload) => RuntimeIntent::ReprioritizeTask(payload),
+            AppEffectPayload::StartService(payload) => RuntimeIntent::StartService(payload),
+            AppEffectPayload::StopService(payload) => RuntimeIntent::StopService(payload),
+            AppEffectPayload::CallService(payload) => RuntimeIntent::CallService(payload),
+            AppEffectPayload::RequestRedraw(_)
+            | AppEffectPayload::Diagnostic(_)
+            | AppEffectPayload::ServiceDiagnostic(_) => panic!("unexpected applied effect payload"),
+        });
+
+    assert!(matches!(
+        &intents[0],
+        RuntimeIntent::Persist(payload) if payload == match effects[0].payload() {
+            AppEffectPayload::Persist(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[1],
+        RuntimeIntent::LoadResource(payload)
+            if payload.operation() == &operation
+                && payload.operation().id() == operation.id()
+                && payload.operation().generation() == operation.generation()
+                && payload.id() == operation.resource_id()
+                && payload == match effects[1].payload() {
+                    AppEffectPayload::LoadResource(payload) => payload,
+                    _ => unreachable!(),
+                }
+    ));
+    assert!(matches!(
+        &intents[2],
+        RuntimeIntent::InvalidateResource(payload) if payload == match effects[2].payload() {
+            AppEffectPayload::InvalidateResource(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[3],
+        RuntimeIntent::StartTask(payload) if payload == match effects[3].payload() {
+            AppEffectPayload::StartTask(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[4],
+        RuntimeIntent::CancelTask(payload) if payload == match effects[4].payload() {
+            AppEffectPayload::CancelTask(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[5],
+        RuntimeIntent::ReprioritizeTask(payload) if payload == match effects[5].payload() {
+            AppEffectPayload::ReprioritizeTask(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[6],
+        RuntimeIntent::StartService(payload) if payload == match effects[6].payload() {
+            AppEffectPayload::StartService(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[7],
+        RuntimeIntent::StopService(payload) if payload == match effects[7].payload() {
+            AppEffectPayload::StopService(payload) => payload,
+            _ => unreachable!(),
+        }
+    ));
+    assert!(matches!(
+        &intents[8],
+        RuntimeIntent::CallService(payload) if payload == match effects[8].payload() {
+            AppEffectPayload::CallService(payload) => payload,
+            _ => unreachable!(),
+        }
     ));
 }
 

@@ -46,9 +46,9 @@ pub use diagnostic::{
 };
 pub use effect::{
     AppEffect, AppEffectPayload, CallServiceEffect, CancelTaskEffect, DiagnosticEffect,
-    EffectBatch, EffectKindId, InvalidateResourceEffect, LoadResourceEffect, PersistEffect,
-    RedrawTarget, ReprioritizeTaskEffect, RequestRedrawEffect, ServiceDiagnosticEffect,
-    StartServiceEffect, StartTaskEffect, StopServiceEffect,
+    EffectBatch, EffectDisposition, EffectKindId, EffectOutcome, InvalidateResourceEffect,
+    LoadResourceEffect, PersistEffect, RedrawTarget, ReprioritizeTaskEffect, RequestRedrawEffect,
+    RuntimeIntent, ServiceDiagnosticEffect, StartServiceEffect, StartTaskEffect, StopServiceEffect,
 };
 pub use event::{AppEvent, EventDescriptor, EventName};
 pub use ids::{
