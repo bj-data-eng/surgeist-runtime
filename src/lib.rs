@@ -33,8 +33,9 @@ mod tests;
 
 pub use command::{AppCommand, CommandDescriptor, CommandName};
 pub use coord::{
-    AppScope, CoordinationState, ScopePathSegment, Subscription, SubscriptionPriority,
-    SubscriptionTarget, SubscriptionTargetKindId,
+    AppScope, CoordinationState, ScopePathSegment, Subscription, SubscriptionAggregate,
+    SubscriptionChange, SubscriptionError, SubscriptionErrorCode, SubscriptionKey,
+    SubscriptionPriority, SubscriptionTarget, SubscriptionTargetKindId,
 };
 pub use descriptor::{
     App, AppDescriptor, AppManifest, ResourceDescriptor, RootDescriptor, StartupWindow,

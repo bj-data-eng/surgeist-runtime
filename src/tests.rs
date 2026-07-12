@@ -1059,19 +1059,149 @@ fn app_scope_covers_runtime_ownership_kinds() {
 }
 
 #[test]
-fn subscriptions_attach_and_detach_observers_without_owning_work() {
-    let mut coord = CoordinationState::default();
-    let sub = Subscription::task(TaskIntentKey::new("compile:main"))
-        .scope(AppScope::resource(ResourceId::new("project:main")))
-        .observer(SurfaceId::from_u64(1));
+fn subscriptions_preserve_scope_observer_priority_and_refcounts() {
+    let target = SubscriptionTarget::task(TaskIntentKey::new("compile:main"));
+    let observer = SurfaceRef::new(SurfaceId::from_u64(1), SurfaceGeneration::initial());
+    let app = Subscription::new(SubscriptionKey::new(
+        target.clone(),
+        AppScope::app(),
+        observer,
+        SubscriptionPriority::Normal,
+    ));
+    let scoped = Subscription::new(SubscriptionKey::new(
+        target.clone(),
+        AppScope::resource(ResourceId::new("project:main")),
+        observer,
+        SubscriptionPriority::Normal,
+    ));
+    let reprioritized = Subscription::new(SubscriptionKey::new(
+        target.clone(),
+        AppScope::app(),
+        observer,
+        SubscriptionPriority::High,
+    ));
+    let next_generation = Subscription::new(SubscriptionKey::new(
+        target.clone(),
+        AppScope::app(),
+        SurfaceRef::new(SurfaceId::from_u64(1), SurfaceGeneration::from_u64(1)),
+        SubscriptionPriority::Normal,
+    ));
+    let mut coordination = CoordinationState::default();
 
-    coord.subscribe(sub.clone());
-    assert_eq!(coord.observer_count(&sub.target()), 1);
-    assert!(coord.is_observed(&sub.target()));
+    assert_eq!(app.key().target(), &target);
+    assert_eq!(app.key().scope(), &AppScope::app());
+    assert_eq!(app.key().observer(), observer);
+    assert_eq!(app.key().priority(), SubscriptionPriority::Normal);
 
-    coord.unsubscribe(&sub);
-    assert_eq!(coord.observer_count(&sub.target()), 0);
-    assert!(!coord.is_observed(&sub.target()));
+    for subscription in [&app, &scoped, &reprioritized, &next_generation] {
+        assert!(matches!(
+            coordination.subscribe(subscription),
+            Ok(SubscriptionChange::Added { .. })
+        ));
+    }
+
+    assert_eq!(coordination.ref_count(app.key()), 1);
+    assert_eq!(coordination.ref_count(scoped.key()), 1);
+    assert_eq!(coordination.ref_count(reprioritized.key()), 1);
+    assert_eq!(coordination.ref_count(next_generation.key()), 1);
+    assert_eq!(coordination.aggregate(&target).unwrap().active_keys(), 4);
+}
+
+#[test]
+fn subscription_replay_and_missing_unsubscribe_report_exact_changes() {
+    let subscription = Subscription::task(
+        TaskIntentKey::new("compile:main"),
+        AppScope::resource(ResourceId::new("project:main")),
+        SurfaceRef::new(SurfaceId::from_u64(1), SurfaceGeneration::initial()),
+        SubscriptionPriority::High,
+    );
+    let key = subscription.key().clone();
+    let mut coordination = CoordinationState::default();
+
+    let added = coordination.subscribe(&subscription).unwrap();
+    assert_eq!(added.key(), &key);
+    assert_eq!(added.ref_count(), 1);
+    assert_eq!(
+        added,
+        SubscriptionChange::Added {
+            key: key.clone(),
+            ref_count: 1,
+        }
+    );
+    assert_eq!(
+        coordination.subscribe(&subscription).unwrap(),
+        SubscriptionChange::Replayed {
+            key: key.clone(),
+            ref_count: 2,
+        }
+    );
+    assert_eq!(
+        coordination.unsubscribe(&key),
+        SubscriptionChange::Decremented {
+            key: key.clone(),
+            ref_count: 1,
+        }
+    );
+    assert_eq!(
+        coordination.unsubscribe(&key),
+        SubscriptionChange::Removed { key: key.clone() }
+    );
+    assert_eq!(
+        coordination.unsubscribe(&key),
+        SubscriptionChange::NotFound { key }
+    );
+}
+
+#[test]
+fn subscription_aggregate_deduplicates_observers_and_orders_scopes() {
+    let target = SubscriptionTarget::resource(ResourceId::new("graph"));
+    let first = SurfaceRef::new(SurfaceId::from_u64(2), SurfaceGeneration::initial());
+    let second = SurfaceRef::new(SurfaceId::from_u64(7), SurfaceGeneration::from_u64(1));
+    let app = AppScope::app();
+    let alpha = AppScope::resource(ResourceId::new("alpha"));
+    let beta = AppScope::resource(ResourceId::new("beta"));
+    let subscriptions = [
+        Subscription::new(SubscriptionKey::new(
+            target.clone(),
+            beta.clone(),
+            second,
+            SubscriptionPriority::Low,
+        )),
+        Subscription::new(SubscriptionKey::new(
+            target.clone(),
+            alpha.clone(),
+            first,
+            SubscriptionPriority::High,
+        )),
+        Subscription::new(SubscriptionKey::new(
+            target.clone(),
+            app.clone(),
+            first,
+            SubscriptionPriority::Normal,
+        )),
+        Subscription::new(SubscriptionKey::new(
+            target.clone(),
+            alpha.clone(),
+            first,
+            SubscriptionPriority::High,
+        )),
+    ];
+    let mut coordination = CoordinationState::default();
+
+    for subscription in &subscriptions {
+        coordination.subscribe(subscription).unwrap();
+    }
+
+    let aggregate = coordination.aggregate(&target).unwrap();
+    assert_eq!(aggregate.target(), &target);
+    assert_eq!(aggregate.active_keys(), 3);
+    assert_eq!(aggregate.observers(), &[first, second]);
+    assert_eq!(aggregate.scopes(), &[app, alpha, beta]);
+    assert_eq!(aggregate.highest_priority(), SubscriptionPriority::High);
+    assert_eq!(
+        coordination.resource_observer_count(&ResourceId::new("graph")),
+        2
+    );
 }
 
 #[test]
