@@ -1,3 +1,8 @@
+#![expect(
+    dead_code,
+    reason = "private test fixtures retain reusable scenario helpers across focused tests"
+)]
+
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},

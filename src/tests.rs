@@ -1,6 +1,72 @@
-use super::testing::{PrototypeApp, ServiceRequestStatus};
+use super::testing::{FakeWakeBridge, HeadlessHarness, PrototypeApp, ServiceRequestStatus};
 use super::*;
 use std::time::Duration;
+
+#[test]
+fn runtime_has_no_sibling_dependencies_or_exports() {
+    let manifest = include_str!("../Cargo.toml");
+    let crate_root = include_str!("lib.rs");
+
+    for (prefix, suffix) in [
+        ("surgeist", "-retained"),
+        ("surgeist", "-window"),
+        ("surgeist", "-task"),
+    ] {
+        let sibling = format!("{prefix}{suffix}");
+        assert!(
+            !manifest.contains(&sibling),
+            "runtime manifest must not depend on {sibling}"
+        );
+    }
+
+    for (prefix, suffix) in [
+        ("surgeist", "_retained"),
+        ("surgeist", "_window"),
+        ("surgeist", "_task"),
+    ] {
+        let sibling = format!("{prefix}{suffix}");
+        assert!(
+            !crate_root.contains(&sibling),
+            "runtime crate root must not expose {sibling}"
+        );
+    }
+}
+
+#[test]
+fn retained_bridge_is_not_runtime_public_api() {
+    let crate_root = include_str!("lib.rs");
+
+    assert!(!crate_root.contains("mod bridge;"));
+    assert!(!crate_root.contains("pub use bridge"));
+    assert!(
+        !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/bridge.rs")
+            .exists()
+    );
+}
+
+#[test]
+fn testing_fixtures_are_not_unconditional_public_api() {
+    let crate_root = include_str!("lib.rs");
+
+    assert!(crate_root.contains("#[cfg(test)]\nmod testing;"));
+    assert!(!crate_root.contains(&["pub ", "mod testing;"].concat()));
+    assert!(!crate_root.contains(&["pub ", "use testing"].concat()));
+}
+
+#[test]
+fn app_loop_has_no_host_handler_or_native_loop() {
+    let input = UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap();
+    let mut expected_runtime = Runtime::new(CounterState::default(), CounterReducer);
+    expected_runtime.enqueue_ui(input.clone());
+    let expected = expected_runtime.drain_once(RuntimeBudget::new());
+
+    let mut app_loop = AppLoop::new(Runtime::new(CounterState::default(), CounterReducer));
+    app_loop.runtime_mut().enqueue_ui(input);
+
+    assert_eq!(app_loop.step(RuntimeBudget::new()), expected);
+    assert_eq!(app_loop.into_runtime().state().value, 1);
+}
 
 #[test]
 fn typed_ids_are_stable_and_debuggable() {
@@ -368,7 +434,7 @@ fn diagnostics_keep_recent_entries_and_counters() {
             InputProvenance::task(TaskIntentId::from_u64(2), TaskIntentAttemptId::from_u64(1)),
         )
         .with_app(AppId::new("photo.lab"))
-        .with_window(surgeist_window::Id::from_u64(9))
+        .with_window(WindowId::from_u64(9))
         .with_root(RootId::new("gallery"))
         .with_scope(AppScope::resource(ResourceId::new("thumbs")))
         .with_resource(ResourceId::new("thumbs"))
@@ -388,10 +454,7 @@ fn diagnostics_keep_recent_entries_and_counters() {
     assert_eq!(log.count(&DiagnosticCode::QUEUE_COALESCED), 1);
     assert_eq!(entries[0].code(), &DiagnosticCode::REDUCER_ERROR);
     assert_eq!(entries[0].app_id(), Some(&AppId::new("photo.lab")));
-    assert_eq!(
-        entries[0].window_id(),
-        Some(surgeist_window::Id::from_u64(9))
-    );
+    assert_eq!(entries[0].window_id(), Some(WindowId::from_u64(9)));
     assert_eq!(entries[0].root_id(), Some(&RootId::new("gallery")));
     assert_eq!(entries[0].resource_id(), Some(&ResourceId::new("thumbs")));
     assert_eq!(entries[0].emitted_effects(), &["request_redraw"]);
@@ -425,12 +488,6 @@ enum CounterInput {
     RedrawWindow(WindowId),
     Save,
     StartTask,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum BridgeCommand {
-    Open,
-    OpenWithPayload(String),
 }
 
 #[test]
@@ -787,109 +844,6 @@ fn runtime_rejects_work_lane_provenance_for_ui_queue() {
 }
 
 #[test]
-fn retained_bridge_decodes_registered_command() {
-    let command_name = surgeist_retained::CommandName::new("open").unwrap();
-    let bridge = RetainedBridge::<BridgeCommand>::new()
-        .command(command_name.clone(), |_| Ok(BridgeCommand::Open));
-
-    let retained = retained_command_for_test(command_name);
-    let context = BridgeContext::new(
-        SurfaceId::from_u64(1),
-        retained.route().clone(),
-        CorrelationId::from_u64(7),
-    );
-    let inputs = bridge
-        .commands_to_inputs(context, std::slice::from_ref(&retained))
-        .unwrap();
-
-    assert_eq!(inputs.len(), 1);
-    assert_eq!(inputs[0].payload(), &BridgeCommand::Open);
-    assert_eq!(inputs[0].provenance().source(), &InputSourceId::RETAINED);
-    assert_eq!(
-        inputs[0].provenance().surface_id(),
-        Some(SurfaceId::from_u64(1))
-    );
-    assert_eq!(
-        inputs[0].provenance().correlation_id(),
-        CorrelationId::from_u64(7)
-    );
-}
-
-#[test]
-fn retained_bridge_decodes_registered_payload_command() {
-    let command_name = surgeist_retained::CommandName::new("open.with.payload").unwrap();
-    let bridge = RetainedBridge::<BridgeCommand>::new().command(command_name.clone(), |command| {
-        Ok(BridgeCommand::OpenWithPayload(
-            command.command().as_str().to_owned(),
-        ))
-    });
-
-    let retained = retained_command_for_test(command_name);
-    let context = BridgeContext::new(
-        SurfaceId::from_u64(1),
-        retained.route().clone(),
-        CorrelationId::from_u64(10),
-    );
-    let inputs = bridge
-        .commands_to_inputs(context, std::slice::from_ref(&retained))
-        .unwrap();
-
-    assert_eq!(
-        inputs[0].payload(),
-        &BridgeCommand::OpenWithPayload("open.with.payload".to_owned())
-    );
-}
-
-#[test]
-fn retained_bridge_reports_unknown_command() {
-    let command_name = surgeist_retained::CommandName::new("unknown").unwrap();
-    let bridge = RetainedBridge::<BridgeCommand>::new();
-    let retained = retained_command_for_test(command_name);
-    let context = BridgeContext::new(
-        SurfaceId::from_u64(1),
-        retained.route().clone(),
-        CorrelationId::from_u64(8),
-    );
-
-    let error = bridge
-        .commands_to_inputs(context, std::slice::from_ref(&retained))
-        .unwrap_err();
-
-    assert_eq!(
-        error.diagnostic().code(),
-        &DiagnosticCode::UNKNOWN_RETAINED_COMMAND
-    );
-    assert_eq!(
-        error.diagnostic().provenance().surface_id(),
-        Some(SurfaceId::from_u64(1))
-    );
-}
-
-#[test]
-fn retained_bridge_reports_invalid_payload() {
-    let command_name = surgeist_retained::CommandName::new("open").unwrap();
-    let bridge = RetainedBridge::<BridgeCommand>::new().command(command_name.clone(), |_| {
-        Err(BridgeDecodeError::invalid_payload("expected folder id"))
-    });
-    let retained = retained_command_for_test(command_name);
-    let context = BridgeContext::new(
-        SurfaceId::from_u64(1),
-        retained.route().clone(),
-        CorrelationId::from_u64(9),
-    );
-
-    let error = bridge
-        .commands_to_inputs(context, std::slice::from_ref(&retained))
-        .unwrap_err();
-
-    assert_eq!(
-        error.diagnostic().code(),
-        &DiagnosticCode::INVALID_RETAINED_PAYLOAD
-    );
-    assert!(error.diagnostic().message().contains("expected folder id"));
-}
-
-#[test]
 fn effect_batches_preserve_order() {
     let effects = EffectBatch::new()
         .push(AppEffect::diagnostic(Diagnostic::info(
@@ -1049,8 +1003,8 @@ fn resource_failure_preserves_renderable_stale_value() {
 fn app_scope_covers_runtime_ownership_kinds() {
     assert!(AppScope::app().is_app());
     assert_eq!(
-        AppScope::window(surgeist_window::Id::from_u64(9)).window_id(),
-        Some(surgeist_window::Id::from_u64(9))
+        AppScope::window(WindowId::from_u64(9)).window_id(),
+        Some(WindowId::from_u64(9))
     );
     assert_eq!(
         AppScope::surface(SurfaceId::from_u64(3)).surface_id(),
@@ -1172,28 +1126,4 @@ fn prototype_jsonrpc_service_handles_out_of_order_progress_cancel_timeout_and_re
         app.service_status(ServiceId::new("jsonrpc")),
         ServiceStatus::Running
     );
-}
-
-fn retained_command_for_test(name: surgeist_retained::CommandName) -> surgeist_retained::Command {
-    let button = surgeist_retained::Element::tagged(surgeist_retained::Tag::new("button").unwrap())
-        .with_hook(surgeist_retained::Hook::new(
-            surgeist_retained::Trigger::Event(surgeist_retained::EventKind::Click),
-            name,
-        ));
-    let mut model =
-        surgeist_retained::Model::new(surgeist_retained::Element::root().with_child(button))
-            .unwrap();
-    let target = model
-        .snapshot()
-        .children(model.root())
-        .unwrap()
-        .next()
-        .unwrap();
-    let report = model
-        .dispatch(surgeist_retained::Event::new(
-            target,
-            surgeist_retained::EventKind::Click,
-        ))
-        .unwrap();
-    report.commands()[0].clone()
 }

@@ -5,7 +5,7 @@ use std::{
 
 use super::{
     AppId, AppScope, InputProvenance, ResourceId, RootId, ServiceId, TaskIntentAttemptId,
-    TaskIntentId,
+    TaskIntentId, WindowId,
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -104,7 +104,7 @@ pub struct Diagnostic {
     message: String,
     provenance: InputProvenance,
     app_id: Option<AppId>,
-    window_id: Option<surgeist_window::Id>,
+    window_id: Option<WindowId>,
     root_id: Option<RootId>,
     scope: Option<AppScope>,
     resource_id: Option<ResourceId>,
@@ -150,7 +150,7 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub fn with_window(mut self, id: surgeist_window::Id) -> Self {
+    pub fn with_window(mut self, id: WindowId) -> Self {
         self.window_id = Some(id);
         self
     }
@@ -224,7 +224,7 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub const fn window_id(&self) -> Option<surgeist_window::Id> {
+    pub const fn window_id(&self) -> Option<WindowId> {
         self.window_id
     }
 

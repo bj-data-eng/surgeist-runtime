@@ -2,9 +2,8 @@
 //!
 //! This module coordinates deterministic app state, retained UI surfaces,
 //! resources, tasks, services, native wakeups, and declared effects. Native
-//! window mechanics stay in `surgeist-window`.
+//! window mechanics stay with the host adapter.
 
-mod bridge;
 mod command;
 mod coord;
 mod descriptor;
@@ -23,12 +22,13 @@ mod service;
 mod snapshot;
 mod surface;
 mod task;
-pub mod testing;
+
+#[cfg(test)]
+mod testing;
 
 #[cfg(test)]
 mod tests;
 
-pub use bridge::{BridgeContext, BridgeDecodeError, BridgeError, RetainedBridge};
 pub use command::{AppCommand, CommandDescriptor, CommandName};
 pub use coord::{
     AppScope, CoordinationState, ScopePathSegment, Subscription, SubscriptionPriority,
@@ -54,7 +54,7 @@ pub use ids::{
     SurfaceInvalidationGeneration, ValueExprId, VersionError, WindowId,
 };
 pub use input::AppInput;
-pub use loop_::{AppHandler, AppLoop};
+pub use loop_::AppLoop;
 pub use provenance::{
     InputOrigin, InputProvenance, InputSourceId, ServiceProvenance, SurfaceProvenance,
     TaskProvenance,
@@ -86,7 +86,6 @@ pub use task::{
     TaskIntentAttemptId, TaskIntentHandle, TaskIntentId, TaskIntentKey, TaskIntentName,
     TaskPriorityHint,
 };
-pub use testing::{FakeClock, FakeWakeBridge, FakeWindowBridge, HeadlessApp, HeadlessHarness};
 
 /// Returns the crate identity while the runtime API is being designed.
 #[must_use]

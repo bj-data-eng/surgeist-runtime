@@ -3,8 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use super::{CustomScopeId, ResourceId, ServiceId, SurfaceId, TaskIntentKey};
-use surgeist_window::Id;
+use super::{CustomScopeId, ResourceId, ServiceId, SurfaceId, TaskIntentKey, WindowId};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ScopePathSegment {
@@ -46,7 +45,7 @@ impl AppScope {
     }
 
     #[must_use]
-    pub fn window(id: Id) -> Self {
+    pub fn window(id: WindowId) -> Self {
         Self::app().then(ScopePathSegment::new("window", id.as_u64().to_string()))
     }
 
@@ -103,10 +102,10 @@ impl AppScope {
     }
 
     #[must_use]
-    pub fn window_id(&self) -> Option<Id> {
+    pub fn window_id(&self) -> Option<WindowId> {
         self.last_value("window")
             .and_then(|value| value.parse().ok())
-            .map(Id::from_u64)
+            .map(WindowId::from_u64)
     }
 
     #[must_use]
