@@ -11,6 +11,10 @@ This sequence orders leaf implementation only. Root `surgeist` owns facade
 adaptation, cross-crate lowering, generated API artifacts, gitlink promotion,
 and root integration evidence.
 
+Candidate handoff evidence remains local. Send no root message unless the user
+later authorizes root communication; cycle-to-cycle base transitions continue
+without waiting for root adaptation.
+
 ## C01 - Leaf Boundary And Model Foundations
 
 Owning repository: `/Users/codex/Development/surgeist-runtime`
@@ -36,8 +40,8 @@ C01-owned exports are exact; local construction, route/element validation,
 mutation, root replacement, invalidation, and overflow are failure-atomic; the
 MSRV and unsafe declarations are present; the candidate is remotely readable.
 
-Handoff: return the breaking facade delta and candidate SHA to root; the verified
-SHA becomes C02's base without waiting for root adaptation.
+Transition evidence: retain the breaking facade delta and candidate SHA locally;
+the verified SHA becomes C02's base.
 
 ## C02 - Resources, Coordination, And Service Mailboxes
 
@@ -63,8 +67,8 @@ coordination preserves exact keys, refcounts, aggregate priority, and idempotent
 change outcomes; mailbox pushes expose exact rejection or eviction results; the
 candidate is remotely readable.
 
-Handoff: return resource, coordination, and service API deltas plus the candidate
-SHA to root; the verified SHA becomes C03's base.
+Transition evidence: retain resource, coordination, and service API deltas plus
+the candidate SHA locally; the verified SHA becomes C03's base.
 
 ## C03 - Surface Lifecycle And Runtime Registry
 
@@ -92,8 +96,8 @@ replacement/removal atomically updates tombstones and subscriptions; inactive
 invalidation work becomes renderable on eligible transitions; the candidate is
 remotely readable.
 
-Handoff: return surface/registry API deltas and the candidate SHA to root; the
-verified SHA becomes C04's base.
+Transition evidence: retain surface/registry API deltas and the candidate SHA
+locally; the verified SHA becomes C04's base.
 
 ## C04 - Reducer, Effects, Provenance, And Versions
 
@@ -105,10 +109,13 @@ abstract intents; reject invalid effects; preserve explicit origin-specific
 provenance/correlation; and complete checked state-version behavior.
 
 Specification sections: S1 `diagnostic.rs`, `effect.rs`, `input.rs`/
-`provenance.rs`, `reducer.rs`, and `task.rs` export rows; S3 final Runtime
-redraw-target paragraph; S3A final effect/redraw lookup paragraph; S4; S5; S7;
-S13 state-version and Runtime drain-preflight overflow; S14 C04 acceptance
-coverage.
+`provenance.rs`, `reducer.rs`, and `task.rs` export rows, plus
+`RuntimeDrainError`, `RuntimeDrainErrorCode`, and the reducer/effect/redraw/intent
+portion of `RuntimeDrainReport` from `runtime.rs`; S3 final Runtime redraw-target
+paragraph; S3A final effect/redraw lookup paragraph; S4; S5; S6 only that drain
+error contract and report portion, including partial-report behavior needed by
+S13; S7; S13 state-version and Runtime drain-preflight overflow; S14 C04
+acceptance coverage.
 
 Prerequisites: C02's resource/service values and C03's final registry/lifecycle
 contracts are published and remotely verified.
@@ -120,11 +127,13 @@ advancement is not uniformly checked.
 Exit evidence: failed reductions commit nothing; changed commits advance state
 and invalidate eligible surfaces atomically; diagnostics/redraws are applied;
 adapter work is forwarded unchanged as typed intents; invalid effects are rejected
-with effective provenance; overflow restores the triggering input and complete
-pending counts; the candidate is remotely readable.
+with effective provenance; overflow restores the triggering input and reports
+prior committed work without a partial failing-input commit; the candidate is
+remotely readable.
 
-Handoff: return reducer, disposition, intent, provenance, and redraw-validation
-deltas plus the candidate SHA to root; the verified SHA becomes C05's base.
+Transition evidence: retain reducer, disposition, intent, provenance,
+redraw-validation, and drain-error deltas plus the candidate SHA locally; the
+verified SHA becomes C05's base.
 
 ## C05 - Queue, Wake, And Drain Scheduling
 
@@ -135,7 +144,10 @@ complete pending reports, and a deferred, non-reentrant proxy wake state machine
 that cannot strand accepted work.
 
 Specification sections: S1 `loop_.rs`/`proxy.rs` exports other than C01's
-`AppLoop`, and the `runtime.rs` export row; S6; S14 C05 acceptance coverage.
+`AppLoop`; remaining `runtime.rs` queue/scheduling exports and the queue, pending,
+and fairness portion of `RuntimeDrainReport`; S6 excluding C04's drain-error and
+reducer/effect/redraw/intent report contract; S13 requeued-input pending-count
+composition and final proof; S14 C05 acceptance coverage.
 
 Prerequisites: C04's runtime input, reducer, effect, and intent contracts are
 published and remotely verified.
@@ -145,14 +157,15 @@ work, reports omit pending state, and wake failure/partial draining can leave wo
 without a continuation.
 
 Exit evidence: queue failures return exact input; bounded drains rotate fairly
-and report every lane; proxy states preserve empty-to-nonempty signaling and
-partial-drain continuation obligations without callback reentrancy; the candidate
-is remotely readable.
+and report every lane, including a requeued overflow input in complete pending
+counts; S13's partial-report composition passes; proxy states preserve empty-to-
+nonempty signaling and partial-drain continuation obligations without callback
+reentrancy; the candidate is remotely readable.
 
-Handoff: return the queue/proxy delta and candidate SHA to root, explicitly
-requiring every concrete root `WakeBridge` test to prove a future host turn,
-never synchronous proxy drain, and immediate handling of continuation wake
-failure; the verified SHA becomes C06's base.
+Transition evidence: retain the queue/proxy delta and candidate SHA locally,
+including the root obligation for every concrete `WakeBridge` test to prove a
+future host turn, never synchronous proxy drain, and immediate handling of
+continuation wake failure; the verified SHA becomes C06's base.
 
 ## C06 - Manifest, Snapshot, Documentation, And Initiative Closure
 
@@ -177,7 +190,8 @@ mismatched, and stale roots with typed errors; public errors/docs/examples satis
 S12; all S1 export allocations and the finite S15 checklist pass; the final
 reviewed candidate is remotely readable.
 
-Handoff: return the immutable final SHA, API/dependency delta, verification
-evidence, and root-owned adapter obligations, including tests proving every
-concrete `WakeBridge` defers a future host turn, never drains synchronously, and
-handles continuation wake failure, for a separate root promotion cycle.
+Completion evidence: retain the immutable final SHA, API/dependency delta,
+verification evidence, and root-owned adapter obligations locally, including
+tests proving every concrete `WakeBridge` defers a future host turn, never drains
+synchronously, and handles continuation wake failure. Do not contact root until
+the user authorizes a separate root promotion cycle.
