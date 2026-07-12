@@ -1,10 +1,13 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use super::{
-    AppEffect, AppEffectPayload, AppInput, Diagnostic, DiagnosticCode, DiagnosticLog,
-    InputProvenance, QueueDiagnostic, RedrawTarget, Reducer, StateVersion, SurfaceId, UiSurface,
+    AppEffect, AppEffectPayload, AppInput, CoordinationState, Diagnostic, DiagnosticCode,
+    DiagnosticLog, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer, StateVersion,
+    Subscription, SubscriptionChange, SubscriptionError, SubscriptionErrorCode, SubscriptionKey,
+    SurfaceError, SurfaceErrorCode, SurfaceGeneration, SurfaceId, SurfaceLifecycle, SurfaceRef,
+    UiSurface,
 };
-use std::collections::BTreeMap;
+use crate::ids::CheckedNext;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeLane {
@@ -156,6 +159,8 @@ pub struct Runtime<State = (), R = (), Input = ()> {
     reducer: R,
     state_version: StateVersion,
     surfaces: BTreeMap<SurfaceId, UiSurface>,
+    retired_surface_generations: BTreeMap<SurfaceId, SurfaceGeneration>,
+    coordination: CoordinationState,
     diagnostics: DiagnosticLog,
     ui_queue: VecDeque<UiInput<Input>>,
     task_queue: VecDeque<TaskInput<Input>>,
@@ -171,6 +176,8 @@ impl<State, R, Input> Runtime<State, R, Input> {
             reducer,
             state_version: StateVersion::from_u64(0),
             surfaces: BTreeMap::new(),
+            retired_surface_generations: BTreeMap::new(),
+            coordination: CoordinationState::default(),
             diagnostics: DiagnosticLog::with_capacity(256),
             ui_queue: VecDeque::new(),
             task_queue: VecDeque::new(),
@@ -205,8 +212,122 @@ impl<State, R, Input> Runtime<State, R, Input> {
         &self.diagnostics
     }
 
-    pub fn add_surface(&mut self, surface: UiSurface) {
-        self.surfaces.insert(surface.id(), surface);
+    /// Registers a newly created surface and returns its current identity.
+    ///
+    /// A removed surface ID receives a checked successor generation, so old
+    /// references cannot target a replacement registration.
+    pub fn register_surface(&mut self, mut surface: UiSurface) -> Result<SurfaceRef, SurfaceError> {
+        let id = surface.id();
+        if self.surfaces.contains_key(&id) {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::DuplicateSurface,
+                "surface is already registered",
+            ));
+        }
+        if surface.lifecycle() != SurfaceLifecycle::Created {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::InvalidLifecycleTransition,
+                "surface registration requires the created lifecycle",
+            ));
+        }
+        if surface.generation() != SurfaceGeneration::initial() {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::StaleSurfaceGeneration,
+                "surface registration requires the initial generation",
+            ));
+        }
+
+        if let Some(retired_generation) = self.retired_surface_generations.get(&id).copied() {
+            let generation = retired_generation
+                .checked_next()
+                .map_err(|_| SurfaceError::version_overflow())?;
+            surface.assign_registration_generation(generation);
+        }
+
+        let reference = surface.surface_ref();
+        self.surfaces.insert(id, surface);
+        Ok(reference)
+    }
+
+    /// Returns the current registered surface for `id`.
+    #[must_use]
+    pub fn surface(&self, id: SurfaceId) -> Option<&UiSurface> {
+        self.surfaces.get(&id)
+    }
+
+    /// Returns the current generation-qualified reference for `id`.
+    #[must_use]
+    pub fn surface_ref(&self, id: SurfaceId) -> Option<SurfaceRef> {
+        self.surface(id).map(UiSurface::surface_ref)
+    }
+
+    /// Stages a mutation against one current surface and commits it atomically.
+    ///
+    /// Failed updates leave both the surface registry and observer subscriptions
+    /// unchanged. A generation change or first terminal transition removes the
+    /// subscriptions for the prior current registration before the new state commits.
+    pub fn update_surface(
+        &mut self,
+        surface: SurfaceRef,
+        update: impl FnOnce(&mut UiSurface) -> Result<(), SurfaceError>,
+    ) -> Result<(), SurfaceError> {
+        let current = self.current_surface(surface)?;
+        let was_terminal = is_terminal(current.lifecycle());
+        let mut staged = current.staged_clone();
+        update(&mut staged)?;
+
+        let cleanup_observer = (staged.surface_ref() != surface
+            || (!was_terminal && is_terminal(staged.lifecycle())))
+        .then_some(surface);
+
+        if let Some(observer) = cleanup_observer {
+            self.coordination.remove_observer(observer);
+        }
+        self.surfaces.insert(surface.surface_id(), staged);
+        Ok(())
+    }
+
+    /// Removes a current registration, records its generation tombstone, and
+    /// clears all subscriptions observed by that exact registration.
+    pub fn remove_surface(&mut self, surface: SurfaceRef) -> Result<UiSurface, SurfaceError> {
+        self.current_surface(surface)?;
+
+        self.coordination.remove_observer(surface);
+        self.retired_surface_generations
+            .insert(surface.surface_id(), surface.generation());
+        Ok(self
+            .surfaces
+            .remove(&surface.surface_id())
+            .expect("current surface was validated before removal"))
+    }
+
+    /// Iterates registered IDs in deterministic ascending order.
+    pub fn surface_ids(&self) -> impl Iterator<Item = SurfaceId> + '_ {
+        self.surfaces.keys().copied()
+    }
+
+    /// Returns read-only subscription coordination state owned by this runtime.
+    #[must_use]
+    pub const fn coordination(&self) -> &CoordinationState {
+        &self.coordination
+    }
+
+    /// Adds a subscription after validating its observer against the registry.
+    pub fn subscribe(
+        &mut self,
+        subscription: Subscription,
+    ) -> Result<SubscriptionChange, SubscriptionError> {
+        self.validate_subscription_observer(subscription.key())?;
+        self.coordination.subscribe(&subscription)
+    }
+
+    /// Removes one subscription reference after validating its observer.
+    pub fn unsubscribe(
+        &mut self,
+        key: &SubscriptionKey,
+    ) -> Result<SubscriptionChange, SubscriptionError> {
+        self.validate_subscription_observer(key)?;
+        Ok(self.coordination.unsubscribe(key))
     }
 
     pub fn enqueue_ui(&mut self, input: UiInput<Input>) {
@@ -264,6 +385,64 @@ impl<State, R, Input> Runtime<State, R, Input> {
 
         self.diagnostics.push(diagnostic);
     }
+
+    fn current_surface(&self, surface: SurfaceRef) -> Result<&UiSurface, SurfaceError> {
+        let Some(current) = self.surfaces.get(&surface.surface_id()) else {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::UnknownSurface,
+                "surface is not registered",
+            ));
+        };
+        if current.generation() != surface.generation() {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::StaleSurfaceGeneration,
+                "surface reference uses a stale generation",
+            ));
+        }
+        Ok(current)
+    }
+
+    fn validate_subscription_observer(
+        &self,
+        key: &SubscriptionKey,
+    ) -> Result<(), SubscriptionError> {
+        let observer = key.observer();
+        let Some(current) = self.surfaces.get(&observer.surface_id()) else {
+            return Err(SubscriptionError::new(
+                SubscriptionErrorCode::UnknownObserver,
+                key.clone(),
+            ));
+        };
+        if current.generation() != observer.generation() {
+            return Err(SubscriptionError::new(
+                SubscriptionErrorCode::StaleObserver,
+                key.clone(),
+            ));
+        }
+        if is_terminal(current.lifecycle()) {
+            return Err(SubscriptionError::new(
+                SubscriptionErrorCode::TerminalObserver,
+                key.clone(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_retired_generation_for_test(
+        &mut self,
+        id: SurfaceId,
+        generation: SurfaceGeneration,
+    ) {
+        self.retired_surface_generations.insert(id, generation);
+    }
+}
+
+const fn is_terminal(lifecycle: SurfaceLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        SurfaceLifecycle::Closing | SurfaceLifecycle::Closed | SurfaceLifecycle::Destroyed
+    )
 }
 
 impl RuntimeLane {

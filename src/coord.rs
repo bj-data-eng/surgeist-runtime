@@ -385,7 +385,6 @@ pub struct SubscriptionError {
 }
 
 impl SubscriptionError {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(code: SubscriptionErrorCode, key: SubscriptionKey) -> Self {
         Self { code, key }
     }
@@ -466,7 +465,6 @@ pub struct CoordinationState {
 }
 
 impl CoordinationState {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn subscribe(
         &mut self,
         subscription: &Subscription,
@@ -490,7 +488,6 @@ impl CoordinationState {
         }
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn unsubscribe(&mut self, key: &SubscriptionKey) -> SubscriptionChange {
         let Some(ref_count) = self.ref_counts.get_mut(key) else {
             return SubscriptionChange::NotFound { key: key.clone() };
@@ -564,7 +561,6 @@ impl CoordinationState {
             .map_or(0, |aggregate| aggregate.observers().len())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remove_observer(&mut self, observer: SurfaceRef) {
         self.ref_counts.retain(|key, _| key.observer() != observer);
     }

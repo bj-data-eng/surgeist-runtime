@@ -782,6 +782,277 @@ fn test_surface(surface_id: u64, window_id: u64, root_id: &str) -> UiSurface {
     .expect("test surface construction should be valid")
 }
 
+fn registry_subscription(observer: SurfaceRef) -> Subscription {
+    Subscription::resource(
+        ResourceId::new("registry"),
+        AppScope::app(),
+        observer,
+        SubscriptionPriority::Normal,
+    )
+}
+
+#[test]
+fn runtime_surface_registry_rejects_duplicate_unknown_removed_and_stale_ids() {
+    let mut runtime = Runtime::<_, _, CounterInput>::new(CounterState::default(), CounterReducer);
+    let first = runtime
+        .register_surface(test_surface(1, 1, "first"))
+        .unwrap();
+    assert_eq!(first.generation(), SurfaceGeneration::initial());
+
+    assert_eq!(
+        runtime
+            .register_surface(test_surface(1, 1, "duplicate"))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::DuplicateSurface
+    );
+    let mut ready = test_surface(2, 1, "ready");
+    ready.ready().unwrap();
+    assert_eq!(
+        runtime.register_surface(ready).unwrap_err().code(),
+        SurfaceErrorCode::InvalidLifecycleTransition
+    );
+    let mut stale_generation = test_surface(3, 1, "stale");
+    stale_generation.set_generations_for_test(1, None);
+    assert_eq!(
+        runtime
+            .register_surface(stale_generation)
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::StaleSurfaceGeneration
+    );
+    assert_eq!(
+        runtime
+            .remove_surface(SurfaceRef::new(
+                SurfaceId::from_u64(2),
+                SurfaceGeneration::initial(),
+            ))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::UnknownSurface
+    );
+
+    runtime.remove_surface(first).unwrap();
+    let replacement = runtime
+        .register_surface(test_surface(1, 1, "replacement"))
+        .unwrap();
+    assert_eq!(replacement.generation(), SurfaceGeneration::from_u64(1));
+    assert_eq!(
+        runtime.surface_ids().collect::<Vec<_>>(),
+        vec![SurfaceId::from_u64(1)]
+    );
+    assert_eq!(
+        runtime.remove_surface(first).unwrap_err().code(),
+        SurfaceErrorCode::StaleSurfaceGeneration
+    );
+    assert_eq!(
+        runtime
+            .update_surface(first, |_| Ok(()))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::StaleSurfaceGeneration
+    );
+}
+
+#[test]
+fn runtime_surface_updates_are_failure_atomic() {
+    let mut runtime = Runtime::<_, _, CounterInput>::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface(3, 1, "before"))
+        .unwrap();
+    let subscription = registry_subscription(surface);
+    runtime.subscribe(subscription.clone()).unwrap();
+
+    let error = runtime
+        .update_surface(surface, |staged| {
+            staged.replace_root(SurfaceRoot::new(RootId::new("after")))?;
+            staged.transition_to(SurfaceLifecycle::Created).map(|_| ())
+        })
+        .unwrap_err();
+
+    assert_eq!(error.code(), SurfaceErrorCode::InvalidLifecycleTransition);
+    assert_eq!(runtime.surface_ref(surface.surface_id()), Some(surface));
+    assert_eq!(
+        runtime.surface(surface.surface_id()).unwrap().root().id(),
+        &RootId::new("before")
+    );
+    assert_eq!(runtime.coordination().ref_count(subscription.key()), 1);
+}
+
+#[test]
+fn reregistered_surface_ids_do_not_restore_old_subscriptions_or_overflow_tombstones() {
+    let mut runtime = Runtime::<_, _, CounterInput>::new(CounterState::default(), CounterReducer);
+    let first = runtime
+        .register_surface(test_surface(4, 1, "first"))
+        .unwrap();
+    let old_subscription = registry_subscription(first);
+    runtime.subscribe(old_subscription.clone()).unwrap();
+    runtime.remove_surface(first).unwrap();
+
+    let replacement = runtime
+        .register_surface(test_surface(4, 1, "replacement"))
+        .unwrap();
+    let replacement_subscription = registry_subscription(replacement);
+    runtime.subscribe(replacement_subscription.clone()).unwrap();
+
+    assert_eq!(runtime.coordination().ref_count(old_subscription.key()), 0);
+    assert_eq!(
+        runtime
+            .unsubscribe(old_subscription.key())
+            .unwrap_err()
+            .code(),
+        SubscriptionErrorCode::StaleObserver
+    );
+    assert_eq!(
+        runtime
+            .coordination()
+            .ref_count(replacement_subscription.key()),
+        1
+    );
+
+    runtime.set_retired_generation_for_test(
+        SurfaceId::from_u64(5),
+        SurfaceGeneration::from_u64(u64::MAX),
+    );
+    assert_eq!(
+        runtime
+            .register_surface(test_surface(5, 1, "overflow"))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::VersionOverflow
+    );
+    assert!(runtime.surface(SurfaceId::from_u64(5)).is_none());
+}
+
+#[test]
+fn terminal_and_removed_surfaces_drop_all_observer_subscriptions() {
+    let mut runtime = Runtime::<_, _, CounterInput>::new(CounterState::default(), CounterReducer);
+    let first = runtime
+        .register_surface(test_surface(6, 1, "first"))
+        .unwrap();
+    let first_subscription = registry_subscription(first);
+    runtime.subscribe(first_subscription.clone()).unwrap();
+
+    runtime
+        .update_surface(first, |surface| {
+            surface.replace_root(SurfaceRoot::new(RootId::new("replacement")))?;
+            Ok(())
+        })
+        .unwrap();
+    let replacement = runtime.surface_ref(first.surface_id()).unwrap();
+    assert_eq!(
+        runtime.coordination().ref_count(first_subscription.key()),
+        0
+    );
+
+    let replacement_subscription = registry_subscription(replacement);
+    runtime.subscribe(replacement_subscription.clone()).unwrap();
+    runtime
+        .update_surface(replacement, |surface| surface.closing().map(|_| ()))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .coordination()
+            .ref_count(replacement_subscription.key()),
+        0
+    );
+    runtime
+        .update_surface(replacement, |surface| surface.closed().map(|_| ()))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .coordination()
+            .ref_count(replacement_subscription.key()),
+        0
+    );
+
+    let removable = runtime
+        .register_surface(test_surface(7, 1, "removable"))
+        .unwrap();
+    let removable_subscription = registry_subscription(removable);
+    runtime.subscribe(removable_subscription.clone()).unwrap();
+    runtime.remove_surface(removable).unwrap();
+    assert_eq!(
+        runtime
+            .coordination()
+            .ref_count(removable_subscription.key()),
+        0
+    );
+}
+
+#[test]
+fn runtime_subscription_validation_preserves_current_coordination_state() {
+    let mut runtime = Runtime::<_, _, CounterInput>::new(CounterState::default(), CounterReducer);
+    let current = runtime
+        .register_surface(test_surface(8, 1, "current"))
+        .unwrap();
+    let current_subscription = registry_subscription(current);
+    runtime.subscribe(current_subscription.clone()).unwrap();
+    let absent = Subscription::resource(
+        ResourceId::new("absent"),
+        AppScope::app(),
+        current,
+        SubscriptionPriority::Normal,
+    );
+    assert_eq!(
+        runtime.unsubscribe(absent.key()).unwrap(),
+        SubscriptionChange::NotFound {
+            key: absent.key().clone()
+        }
+    );
+    assert_eq!(
+        runtime.coordination().ref_count(current_subscription.key()),
+        1
+    );
+
+    let unknown = registry_subscription(SurfaceRef::new(
+        SurfaceId::from_u64(9),
+        SurfaceGeneration::initial(),
+    ));
+    assert_eq!(
+        runtime.subscribe(unknown).unwrap_err().code(),
+        SubscriptionErrorCode::UnknownObserver
+    );
+    let unknown_key = registry_subscription(SurfaceRef::new(
+        SurfaceId::from_u64(9),
+        SurfaceGeneration::initial(),
+    ));
+    assert_eq!(
+        runtime.unsubscribe(unknown_key.key()).unwrap_err().code(),
+        SubscriptionErrorCode::UnknownObserver
+    );
+
+    let stale = registry_subscription(SurfaceRef::new(
+        current.surface_id(),
+        SurfaceGeneration::from_u64(1),
+    ));
+    assert_eq!(
+        runtime.subscribe(stale.clone()).unwrap_err().code(),
+        SubscriptionErrorCode::StaleObserver
+    );
+    assert_eq!(
+        runtime.coordination().ref_count(current_subscription.key()),
+        1
+    );
+
+    runtime
+        .update_surface(current, |surface| surface.closing().map(|_| ()))
+        .unwrap();
+    let terminal = registry_subscription(current);
+    assert_eq!(
+        runtime.subscribe(terminal.clone()).unwrap_err().code(),
+        SubscriptionErrorCode::TerminalObserver
+    );
+    assert_eq!(
+        runtime.unsubscribe(terminal.key()).unwrap_err().code(),
+        SubscriptionErrorCode::TerminalObserver
+    );
+    assert_eq!(
+        runtime.coordination().ref_count(current_subscription.key()),
+        0
+    );
+}
+
 #[test]
 fn task_intent_identity_types_are_runtime_owned() {
     let name = TaskIntentName::new("search");
@@ -1077,7 +1348,9 @@ fn reducer_returns_effects_without_executing_them() {
 #[test]
 fn runtime_commits_state_before_executing_effects() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.add_surface(test_surface(1, 1, "main"));
+    runtime
+        .register_surface(test_surface(1, 1, "main"))
+        .unwrap();
 
     runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
     let report = runtime.drain_once(RuntimeBudget::default());
@@ -1236,8 +1509,12 @@ fn runtime_service_queue_overflow_records_diagnostic_and_drops_newest() {
 #[test]
 fn runtime_redraw_all_reports_registered_surface_ids() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.add_surface(test_surface(2, 1, "secondary"));
-    runtime.add_surface(test_surface(1, 1, "main"));
+    runtime
+        .register_surface(test_surface(2, 1, "secondary"))
+        .unwrap();
+    runtime
+        .register_surface(test_surface(1, 1, "main"))
+        .unwrap();
     runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
 
     let report = runtime.drain_once(RuntimeBudget::default());
@@ -1253,9 +1530,15 @@ fn runtime_redraw_window_reports_surfaces_for_that_window() {
     let target_window = WindowId::from_u64(7);
     let other_window = WindowId::from_u64(8);
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.add_surface(test_surface(1, other_window.as_u64(), "other"));
-    runtime.add_surface(test_surface(3, target_window.as_u64(), "right"));
-    runtime.add_surface(test_surface(2, target_window.as_u64(), "left"));
+    runtime
+        .register_surface(test_surface(1, other_window.as_u64(), "other"))
+        .unwrap();
+    runtime
+        .register_surface(test_surface(3, target_window.as_u64(), "right"))
+        .unwrap();
+    runtime
+        .register_surface(test_surface(2, target_window.as_u64(), "left"))
+        .unwrap();
     runtime.enqueue_ui(
         UiInput::new(
             CounterInput::RedrawWindow(target_window),

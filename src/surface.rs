@@ -640,7 +640,7 @@ pub struct SurfaceError {
 }
 
 impl SurfaceError {
-    fn new(code: SurfaceErrorCode, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: SurfaceErrorCode, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -648,7 +648,7 @@ impl SurfaceError {
         }
     }
 
-    fn version_overflow() -> Self {
+    pub(crate) fn version_overflow() -> Self {
         Self {
             code: SurfaceErrorCode::VersionOverflow,
             message: "surface version overflow".to_owned(),
@@ -739,6 +739,28 @@ impl UiSurface {
     #[must_use]
     pub const fn surface_ref(&self) -> SurfaceRef {
         SurfaceRef::new(self.id, self.generation)
+    }
+
+    pub(crate) fn staged_clone(&self) -> Self {
+        Self {
+            id: self.id,
+            window_id: self.window_id,
+            root: self.root.clone(),
+            generation: self.generation,
+            lifecycle: self.lifecycle,
+            viewport: self.viewport,
+            scroll_offset: self.scroll_offset,
+            focused: self.focused,
+            hovered: self.hovered,
+            invalidations: self.invalidations.clone(),
+            last_invalidation_generation: self.last_invalidation_generation,
+            last_rendered_state_version: self.last_rendered_state_version,
+            last_rendered_invalidation_generation: self.last_rendered_invalidation_generation,
+        }
+    }
+
+    pub(crate) fn assign_registration_generation(&mut self, generation: SurfaceGeneration) {
+        self.generation = generation;
     }
 
     #[must_use]
