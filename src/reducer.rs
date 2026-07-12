@@ -1,3 +1,5 @@
+use std::{error::Error, fmt};
+
 use super::{AppEffect, AppInput, EffectBatch, InputProvenance};
 
 /// Reduces an immutable borrowed state and input into an explicit commit result.
@@ -143,6 +145,14 @@ impl ReducerFailure {
         self.provenance.as_ref()
     }
 }
+
+impl fmt::Display for ReducerFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl Error for ReducerFailure {}
 
 /// The explicit outcome of reducing one input.
 ///

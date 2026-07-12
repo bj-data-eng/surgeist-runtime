@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 //! App runtime and authoring DSL boundary for Surgeist.
 //!

@@ -45,6 +45,7 @@ impl App {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct AppDescriptor {
     id: AppId,
     version: String,
@@ -53,6 +54,7 @@ pub struct AppDescriptor {
 
 impl AppDescriptor {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(id: AppId, version: impl Into<String>) -> Self {
         let diagnostics_namespace = id.as_str().to_owned();
         Self {
@@ -63,37 +65,44 @@ impl AppDescriptor {
     }
 
     #[must_use]
+    /// Appends an authored command declaration.
     pub fn id(&self) -> &AppId {
         &self.id
     }
 
     #[must_use]
+    /// Appends an authored event declaration.
     pub fn version(&self) -> &str {
         &self.version
     }
 
     #[must_use]
+    /// Appends an authored task declaration.
     pub fn diagnostics_namespace(&self) -> &str {
         &self.diagnostics_namespace
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct WindowDescriptorId(String);
 
 impl WindowDescriptorId {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
     #[must_use]
+    /// Appends an authored resource declaration.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct WindowDescriptor {
     id: WindowDescriptorId,
     title: String,
@@ -102,6 +111,7 @@ pub struct WindowDescriptor {
 
 impl WindowDescriptor {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(id: WindowDescriptorId, title: impl Into<String>) -> Self {
         Self {
             id,
@@ -111,28 +121,33 @@ impl WindowDescriptor {
     }
 
     #[must_use]
+    /// Appends an authored window declaration.
     pub fn allows_root(mut self, id: RootId) -> Self {
         self.allowed_roots.push(id);
         self
     }
 
     #[must_use]
+    /// Appends an authored root declaration.
     pub fn id(&self) -> &WindowDescriptorId {
         &self.id
     }
 
     #[must_use]
+    /// Appends an authored startup window binding.
     pub fn title(&self) -> &str {
         &self.title
     }
 
     #[must_use]
+    /// Returns the application descriptor being authored.
     pub fn allowed_roots(&self) -> &[RootId] {
         &self.allowed_roots
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct RootDescriptor {
     id: RootId,
     required_commands: Vec<CommandDescriptor>,
@@ -142,6 +157,7 @@ pub struct RootDescriptor {
 
 impl RootDescriptor {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(id: RootId) -> Self {
         Self {
             id,
@@ -152,39 +168,46 @@ impl RootDescriptor {
     }
 
     #[must_use]
+    /// Returns authored command declarations in append order.
     pub fn requires_command(mut self, descriptor: CommandDescriptor) -> Self {
         self.required_commands.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Returns authored event declarations in append order.
     pub fn emits_event(mut self, descriptor: EventDescriptor) -> Self {
         self.required_events.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Returns authored task declarations in append order.
     pub fn binds_snapshot(mut self, binding: SnapshotBinding) -> Self {
         self.snapshot_bindings.push(binding);
         self
     }
 
     #[must_use]
+    /// Returns authored resource declarations in append order.
     pub fn id(&self) -> &RootId {
         &self.id
     }
 
     #[must_use]
+    /// Returns authored window declarations in append order.
     pub fn required_commands(&self) -> &[CommandDescriptor] {
         &self.required_commands
     }
 
     #[must_use]
+    /// Returns authored root declarations in append order.
     pub fn required_events(&self) -> &[EventDescriptor] {
         &self.required_events
     }
 
     #[must_use]
+    /// Returns authored startup bindings in append order.
     pub fn snapshot_bindings(&self) -> &[SnapshotBinding] {
         &self.snapshot_bindings
     }
@@ -249,6 +272,7 @@ impl ResourceDescriptor {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct StartupWindow {
     window_id: WindowDescriptorId,
     root_id: RootId,
@@ -257,6 +281,7 @@ pub struct StartupWindow {
 
 impl StartupWindow {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn new(window_id: WindowDescriptorId, root_id: RootId, scope: AppScope) -> Self {
         Self {
             window_id,
@@ -266,16 +291,19 @@ impl StartupWindow {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn window_id(&self) -> &WindowDescriptorId {
         &self.window_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn root_id(&self) -> &RootId {
         &self.root_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn scope(&self) -> &AppScope {
         &self.scope
     }
@@ -311,88 +339,106 @@ impl AppManifest {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn command(mut self, descriptor: CommandDescriptor) -> Self {
         self.commands.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn event(mut self, descriptor: EventDescriptor) -> Self {
         self.events.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn task(mut self, descriptor: TaskDescriptor) -> Self {
         self.tasks.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn resource(mut self, descriptor: ResourceDescriptor) -> Self {
         self.resources.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn window(mut self, descriptor: WindowDescriptor) -> Self {
         self.windows.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn root(mut self, descriptor: RootDescriptor) -> Self {
         self.roots.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn startup_window(mut self, descriptor: StartupWindow) -> Self {
         self.startup.push(descriptor);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn app(&self) -> &AppDescriptor {
         &self.app
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn commands(&self) -> &[CommandDescriptor] {
         &self.commands
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn events(&self) -> &[EventDescriptor] {
         &self.events
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn tasks(&self) -> &[TaskDescriptor] {
         &self.tasks
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn resources(&self) -> &[ResourceDescriptor] {
         &self.resources
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn windows(&self) -> &[WindowDescriptor] {
         &self.windows
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn roots(&self) -> &[RootDescriptor] {
         &self.roots
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn startup(&self) -> &[StartupWindow] {
         &self.startup
     }
 
     /// Consumes this authored manifest into an immutable validated manifest.
+    ///
+    /// Validation reports every deterministic issue and never exposes a partial
+    /// validated manifest on failure.
     pub fn validate(self) -> Result<ValidatedAppManifest, ManifestValidationError> {
         let Self {
             app,

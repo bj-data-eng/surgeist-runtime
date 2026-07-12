@@ -3,30 +3,46 @@ use std::collections::{VecDeque, vec_deque};
 use super::{AppScope, ServiceId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// The observed lifecycle state of a service managed by an adapter.
 pub enum ServiceStatus {
+    /// The service is not running.
     Stopped,
+    /// Startup has been requested but has not completed.
     Starting,
+    /// The service is available to process mailbox messages.
     Running,
+    /// The service remains available but reports degraded operation.
     Degraded,
+    /// Shutdown has been requested while the service may still drain work.
     Stopping,
+    /// The last startup or operation failed.
     Failed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// Selects when a registered service should be started.
 pub enum ServiceStartup {
+    /// Start as part of application startup.
     Eager,
+    /// Start only when requested by an adapter.
     Lazy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// Selects how a running service should be stopped.
 pub enum ServiceShutdown {
+    /// Stop without waiting for queued mailbox work.
     Immediate,
+    /// Allow queued mailbox work to drain before stopping.
     DrainThenStop,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// Selects whether a failed service should restart.
 pub enum ServiceRestart {
+    /// Never restart automatically.
     Never,
+    /// Restart after a failure.
     OnFailure,
 }
 
@@ -54,6 +70,7 @@ pub enum MailboxPushOutcome<T> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Immutable capacity and overflow behavior for a service mailbox.
 pub struct MailboxPolicy {
     capacity: usize,
     overflow: MailboxOverflow,
@@ -62,6 +79,7 @@ pub struct MailboxPolicy {
 
 impl MailboxPolicy {
     #[must_use]
+    /// Creates a rejecting policy with `capacity` queued message slots.
     pub const fn bounded(capacity: usize) -> Self {
         Self {
             capacity,
@@ -71,34 +89,40 @@ impl MailboxPolicy {
     }
 
     #[must_use]
+    /// Changes a policy to evict the oldest message when a nonempty mailbox is full.
     pub const fn drop_oldest(mut self) -> Self {
         self.overflow = MailboxOverflow::DropOldest;
         self
     }
 
     #[must_use]
+    /// Requests overflow counting while retaining the selected overflow behavior.
     pub const fn observe_overflow(mut self) -> Self {
         self.observe_overflow = true;
         self
     }
 
     #[must_use]
+    /// Returns the number of messages this policy may retain.
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
 
     #[must_use]
+    /// Returns the full-mailbox behavior.
     pub const fn overflow(&self) -> MailboxOverflow {
         self.overflow
     }
 
     #[must_use]
+    /// Returns whether overflows increment the mailbox counter.
     pub const fn observes_overflow(&self) -> bool {
         self.observe_overflow
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// FIFO mailbox owned by one service registration.
 pub struct ServiceRegistration {
     id: ServiceId,
     scope: AppScope,
@@ -110,6 +134,7 @@ pub struct ServiceRegistration {
 
 impl ServiceRegistration {
     #[must_use]
+    /// Creates an empty mailbox for `id` with the supplied immutable policy.
     pub fn new(id: ServiceId) -> Self {
         Self {
             id,
@@ -122,88 +147,104 @@ impl ServiceRegistration {
     }
 
     #[must_use]
+    /// Drains every queued message in FIFO order.
     pub fn with_scope(mut self, scope: AppScope) -> Self {
         self.scope = scope;
         self
     }
 
     #[must_use]
+    /// Returns the current number of queued messages.
     pub const fn with_mailbox_policy(mut self, mailbox: MailboxPolicy) -> Self {
         self.mailbox = mailbox;
         self
     }
 
     #[must_use]
+    /// Reports whether no messages are queued.
     pub const fn with_startup(mut self, startup: ServiceStartup) -> Self {
         self.startup = startup;
         self
     }
 
     #[must_use]
+    /// Returns the number of recorded mailbox overflows.
     pub const fn with_shutdown(mut self, shutdown: ServiceShutdown) -> Self {
         self.shutdown = shutdown;
         self
     }
 
     #[must_use]
+    /// Returns the service that owns this mailbox.
     pub const fn with_restart(mut self, restart: ServiceRestart) -> Self {
         self.restart = restart;
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn mailbox(&self) -> &MailboxPolicy {
         &self.mailbox
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn startup(&self) -> ServiceStartup {
         self.startup
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn shutdown(&self) -> ServiceShutdown {
         self.shutdown
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn restart(&self) -> ServiceRestart {
         self.restart
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct ServiceCommandName(String);
 
 impl ServiceCommandName {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct ServiceCommandPayload {
     json_text: Box<str>,
 }
 
 impl ServiceCommandPayload {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn from_json_text(json_text: impl Into<String>) -> Self {
         Self {
             json_text: json_text.into().into_boxed_str(),
@@ -211,12 +252,14 @@ impl ServiceCommandPayload {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn as_json_text(&self) -> &str {
         &self.json_text
     }
 }
 
 #[derive(Clone, Debug)]
+/// A public runtime value with a private representation.
 pub struct ServiceMailbox<T: Send + 'static> {
     id: ServiceId,
     policy: MailboxPolicy,
@@ -226,6 +269,7 @@ pub struct ServiceMailbox<T: Send + 'static> {
 
 impl<T: Send + 'static> ServiceMailbox<T> {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(id: ServiceId, policy: MailboxPolicy) -> Self {
         Self {
             id,
@@ -266,31 +310,37 @@ impl<T: Send + 'static> ServiceMailbox<T> {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn drain(&mut self) -> vec_deque::Drain<'_, T> {
         self.messages.drain(..)
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn len(&self) -> usize {
         self.messages.len()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn overflow_count(&self) -> usize {
         self.overflow_count
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn policy(&self) -> &MailboxPolicy {
         &self.policy
     }

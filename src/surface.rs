@@ -11,6 +11,7 @@ use super::{
 use crate::ids::CheckedNext;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceRoot {
     id: RootId,
     elements: SurfaceElements,
@@ -18,6 +19,7 @@ pub struct SurfaceRoot {
 
 impl SurfaceRoot {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(id: RootId) -> Self {
         Self {
             id,
@@ -26,10 +28,12 @@ impl SurfaceRoot {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &RootId {
         &self.id
     }
 
+    /// Performs the associated runtime operation.
     pub fn register_element(
         &mut self,
         registration: ElementRegistration,
@@ -48,34 +52,40 @@ impl SurfaceRoot {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn elements(&self) -> &SurfaceElements {
         &self.elements
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceElements {
     registrations: BTreeMap<ElementId, ElementRegistration>,
 }
 
 impl SurfaceElements {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn get(&self, element_id: ElementId) -> Option<&ElementRegistration> {
         self.registrations.get(&element_id)
     }
 
+    /// Performs the associated runtime operation.
     pub fn iter(&self) -> impl Iterator<Item = &ElementRegistration> {
         self.registrations.values()
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct ElementRegistration {
     id: ElementId,
     phases: BTreeSet<ElementPhase>,
 }
 
 impl ElementRegistration {
+    /// Constructs this runtime value.
     pub fn try_new(
         id: ElementId,
         phases: impl IntoIterator<Item = ElementPhase>,
@@ -92,10 +102,12 @@ impl ElementRegistration {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> ElementId {
         self.id
     }
 
+    /// Performs the associated runtime operation.
     pub fn phases(&self) -> impl Iterator<Item = ElementPhase> + '_ {
         self.phases.iter().copied()
     }
@@ -106,13 +118,18 @@ impl ElementRegistration {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// Classifies a public runtime state or outcome.
 pub enum ElementPhase {
+    /// One case of this public runtime contract.
     Capture,
+    /// One case of this public runtime contract.
     Target,
+    /// One case of this public runtime contract.
     Bubble,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceRef {
     surface_id: SurfaceId,
     generation: SurfaceGeneration,
@@ -120,6 +137,7 @@ pub struct SurfaceRef {
 
 impl SurfaceRef {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn new(surface_id: SurfaceId, generation: SurfaceGeneration) -> Self {
         Self {
             surface_id,
@@ -128,17 +146,20 @@ impl SurfaceRef {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn surface_id(&self) -> SurfaceId {
         self.surface_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.generation
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceElementRef {
     surface: SurfaceRef,
     element_id: ElementId,
@@ -146,6 +167,7 @@ pub struct SurfaceElementRef {
 
 impl SurfaceElementRef {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn new(surface: SurfaceRef, element_id: ElementId) -> Self {
         Self {
             surface,
@@ -154,33 +176,39 @@ impl SurfaceElementRef {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn surface(&self) -> SurfaceRef {
         self.surface
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn surface_id(&self) -> SurfaceId {
         self.surface.surface_id()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.surface.generation()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn element_id(&self) -> ElementId {
         self.element_id
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceRoute {
     surface: SurfaceRef,
     steps: Vec<SurfaceRouteStep>,
 }
 
 impl SurfaceRoute {
+    /// Constructs this runtime value.
     pub fn try_new(
         surface: SurfaceRef,
         steps: impl IntoIterator<Item = SurfaceRouteStep>,
@@ -224,26 +252,31 @@ impl SurfaceRoute {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn surface(&self) -> SurfaceRef {
         self.surface
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn surface_id(&self) -> SurfaceId {
         self.surface.surface_id()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.surface.generation()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn steps(&self) -> &[SurfaceRouteStep] {
         &self.steps
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn target(&self) -> SurfaceElementRef {
         let step = self
             .steps
@@ -255,6 +288,7 @@ impl SurfaceRoute {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceRouteStep {
     element_id: ElementId,
     phase: ElementPhase,
@@ -262,22 +296,26 @@ pub struct SurfaceRouteStep {
 
 impl SurfaceRouteStep {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn new(element_id: ElementId, phase: ElementPhase) -> Self {
         Self { element_id, phase }
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn element_id(&self) -> ElementId {
         self.element_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn phase(&self) -> ElementPhase {
         self.phase
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceSize {
     width: u32,
     height: u32,
@@ -285,22 +323,26 @@ pub struct SurfaceSize {
 
 impl SurfaceSize {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn new(width: u32, height: u32) -> Self {
         Self { width, height }
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn width(&self) -> u32 {
         self.width
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn height(&self) -> u32 {
         self.height
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfacePoint {
     x: i32,
     y: i32,
@@ -308,27 +350,32 @@ pub struct SurfacePoint {
 
 impl SurfacePoint {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn origin() -> Self {
         Self::new(0, 0)
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn x(&self) -> i32 {
         self.x
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn y(&self) -> i32 {
         self.y
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SurfaceMutation {
     changed: bool,
     invalidation_generation: Option<SurfaceInvalidationGeneration>,
@@ -358,16 +405,19 @@ impl SurfaceMutation {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn changed(&self) -> bool {
         self.changed
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn invalidation_generation(&self) -> Option<SurfaceInvalidationGeneration> {
         self.invalidation_generation
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn redraw_required(&self) -> bool {
         self.redraw_required
     }
@@ -380,14 +430,23 @@ impl SurfaceMutation {
 /// local mutation, targeting, invalidation, and rendering operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SurfaceLifecycle {
+    /// Newly constructed and not yet ready to render.
     Created,
+    /// Active and eligible for rendering and local mutation.
     Ready,
+    /// Active after a resize and eligible for rendering.
     Resized,
+    /// Temporarily hidden; it can return to ready.
     Hidden,
+    /// Temporarily occluded; it can return to ready, hidden, or suspended.
     Occluded,
+    /// Temporarily suspended; it can return to ready or hidden.
     Suspended,
+    /// Terminal shutdown phase that can only advance to closed or destroyed.
     Closing,
+    /// Terminal closed phase that can only advance to destroyed.
     Closed,
+    /// Final terminal phase with no valid successor.
     Destroyed,
 }
 
@@ -472,10 +531,14 @@ impl SurfaceInvalidation {
 pub enum SurfaceInvalidationKind {
     /// A root replacement created a new [`SurfaceGeneration`].
     RootReplaced {
+        /// Associated data carried by this public contract.
         surface_generation: SurfaceGeneration,
     },
     /// A newer application state snapshot is available for rendering.
-    SnapshotChanged { version: StateVersion },
+    SnapshotChanged {
+        /// Identifies the application state revision available to render.
+        version: StateVersion,
+    },
     /// The viewport size changed.
     ViewportChanged,
     /// Local surface interaction state changed.
@@ -617,26 +680,44 @@ impl SurfaceRenderAck {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+/// Classifies a rejected surface registration, transition, targeting, or render operation.
 pub enum SurfaceErrorCode {
+    /// An element was registered more than once for the same root.
     DuplicateElement,
+    /// An element registration declared no event phases.
     MissingElementPhase,
+    /// A surface ID is already registered.
     DuplicateSurface,
+    /// No surface is registered for the requested ID.
     UnknownSurface,
+    /// The requested lifecycle successor is not allowed from the current phase.
     InvalidLifecycleTransition,
+    /// A terminal surface cannot perform the requested local operation.
     TerminalSurface,
+    /// A reference belongs to a different surface ID.
     SurfaceMismatch,
+    /// A reference names an earlier surface generation.
     StaleSurfaceGeneration,
+    /// The requested element is not registered by the surface root.
     UnknownElement,
+    /// The requested element does not allow the requested targeting phase.
     IneligibleElementTarget,
+    /// A route contains no steps.
     EmptyRoute,
+    /// A route contains no target phase.
     MissingRouteTarget,
+    /// A route contains more than one target phase.
     MultipleRouteTargets,
+    /// Route phases are not ordered capture, target, then bubble.
     InvalidRoutePhaseOrder,
+    /// A render acknowledgement does not match current surface render state.
     StaleRenderAck,
+    /// A checked surface generation or invalidation revision overflowed.
     VersionOverflow,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A surface operation rejection with a stable semantic code and optional version source.
 pub struct SurfaceError {
     code: SurfaceErrorCode,
     message: String,
@@ -661,11 +742,13 @@ impl SurfaceError {
     }
 
     #[must_use]
+    /// Returns the semantic reason the operation was rejected.
     pub const fn code(&self) -> SurfaceErrorCode {
         self.code
     }
 
     #[must_use]
+    /// Returns the operation-specific diagnostic message.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -686,6 +769,7 @@ impl Error for SurfaceError {
 }
 
 #[derive(Debug)]
+/// One registered UI surface with generation-qualified identity and lifecycle state.
 pub struct UiSurface {
     id: SurfaceId,
     window_id: WindowId,
@@ -703,6 +787,7 @@ pub struct UiSurface {
 }
 
 impl UiSurface {
+    /// Creates a `Created` surface with initial generation, default geometry, and no invalidations.
     pub fn try_new(
         id: SurfaceId,
         window_id: WindowId,
@@ -726,21 +811,25 @@ impl UiSurface {
     }
 
     #[must_use]
+    /// Returns this surface's opaque identity.
     pub const fn id(&self) -> SurfaceId {
         self.id
     }
 
     #[must_use]
+    /// Returns the window that owns this surface.
     pub const fn window_id(&self) -> WindowId {
         self.window_id
     }
 
     #[must_use]
+    /// Returns the current generation, which changes after root replacement.
     pub const fn generation(&self) -> SurfaceGeneration {
         self.generation
     }
 
     #[must_use]
+    /// Returns the generation-qualified reference required by later surface operations.
     pub const fn surface_ref(&self) -> SurfaceRef {
         SurfaceRef::new(self.id, self.generation)
     }
@@ -768,36 +857,43 @@ impl UiSurface {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn root(&self) -> &SurfaceRoot {
         &self.root
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn lifecycle(&self) -> SurfaceLifecycle {
         self.lifecycle
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn viewport(&self) -> SurfaceSize {
         self.viewport
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn scroll_offset(&self) -> SurfacePoint {
         self.scroll_offset
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn focused_element(&self) -> Option<SurfaceElementRef> {
         self.focused
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn hovered_element(&self) -> Option<SurfaceElementRef> {
         self.hovered
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn invalidations(&self) -> &[SurfaceInvalidation] {
         &self.invalidations
     }
@@ -862,6 +958,7 @@ impl UiSurface {
         self.transition_to(SurfaceLifecycle::Destroyed)
     }
 
+    /// Performs the associated runtime operation.
     pub fn replace_root(&mut self, root: SurfaceRoot) -> Result<SurfaceGeneration, SurfaceError> {
         self.ensure_not_terminal()?;
         let generation = self
@@ -884,6 +981,7 @@ impl UiSurface {
         Ok(generation)
     }
 
+    /// Performs the associated runtime operation.
     pub fn element_ref(&self, element_id: ElementId) -> Result<SurfaceElementRef, SurfaceError> {
         self.ensure_not_terminal()?;
         let reference = SurfaceElementRef::new(self.surface_ref(), element_id);

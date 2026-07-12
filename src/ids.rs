@@ -3,15 +3,18 @@ use std::{error::Error, fmt, num::NonZeroU64};
 macro_rules! string_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[doc = concat!("Opaque string identifier for [`", stringify!($name), "`].")]
         pub struct $name(String);
 
         impl $name {
             #[must_use]
+            /// Stores caller-provided identifier text without interpretation.
             pub fn new(value: impl Into<String>) -> Self {
                 Self(value.into())
             }
 
             #[must_use]
+            /// Returns the identifier text.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -22,15 +25,18 @@ macro_rules! string_id {
 macro_rules! numeric_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[doc = concat!("Opaque numeric identifier for [`", stringify!($name), "`].")]
         pub struct $name(u64);
 
         impl $name {
             #[must_use]
+            /// Creates an identifier from its exact numeric representation.
             pub const fn from_u64(value: u64) -> Self {
                 Self(value)
             }
 
             #[must_use]
+            /// Returns the exact numeric representation.
             pub const fn as_u64(self) -> u64 {
                 self.0
             }
@@ -103,6 +109,7 @@ impl Error for CorrelationError {}
 
 impl SurfaceGeneration {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn initial() -> Self {
         Self(0)
     }
@@ -110,6 +117,7 @@ impl SurfaceGeneration {
 
 impl SurfaceInvalidationGeneration {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn initial() -> Self {
         Self(0)
     }
@@ -117,12 +125,14 @@ impl SurfaceInvalidationGeneration {
 
 impl ResourceGeneration {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn initial() -> Self {
         Self(0)
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct ResourceOperationId(NonZeroU64);
 
 impl ResourceOperationId {
@@ -131,6 +141,7 @@ impl ResourceOperationId {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn get(self) -> u64 {
         self.0.get()
     }
@@ -138,7 +149,9 @@ impl ResourceOperationId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+/// Classifies a public runtime state or outcome.
 pub enum VersionError {
+    /// One case of this public runtime contract.
     Overflow,
 }
 

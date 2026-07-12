@@ -10,22 +10,31 @@ static INPUT_SOURCE_WINDOW: InputSourceId = InputSourceId::from_static("window")
 static INPUT_SOURCE_SYSTEM: InputSourceId = InputSourceId::from_static("system");
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct InputSourceId(Cow<'static, str>);
 
 impl InputSourceId {
+    /// A predefined runtime contract identifier.
     pub const UI: Self = Self::from_static("ui");
+    /// A predefined runtime contract identifier.
     pub const ADAPTER: Self = Self::from_static("adapter");
+    /// A predefined runtime contract identifier.
     pub const TASK: Self = Self::from_static("task");
+    /// A predefined runtime contract identifier.
     pub const SERVICE: Self = Self::from_static("service");
+    /// A predefined runtime contract identifier.
     pub const WINDOW: Self = Self::from_static("window");
+    /// A predefined runtime contract identifier.
     pub const SYSTEM: Self = Self::from_static("system");
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(value: impl Into<Cow<'static, str>>) -> Self {
         Self(value.into())
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -53,17 +62,21 @@ pub struct InputProvenance {
 /// [`Self::Absent`] is the default and carries no synthetic correlation ID.
 pub enum Correlation {
     #[default]
+    /// One case of this public runtime contract.
     Absent,
+    /// One case of this public runtime contract.
     Present(CorrelationId),
 }
 
 impl Correlation {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn is_absent(self) -> bool {
         matches!(self, Self::Absent)
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(self) -> Option<CorrelationId> {
         match self {
             Self::Absent => None,
@@ -75,11 +88,17 @@ impl Correlation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 /// The semantic source category and source-specific identifying data for input.
 pub enum InputOrigin {
+    /// One case of this public runtime contract.
     System,
+    /// One case of this public runtime contract.
     Ui(SurfaceProvenance),
+    /// One case of this public runtime contract.
     Adapter(SurfaceProvenance),
+    /// One case of this public runtime contract.
     Task(TaskProvenance),
+    /// One case of this public runtime contract.
     Service(ServiceProvenance),
+    /// One case of this public runtime contract.
     Window(SurfaceProvenance),
 }
 
@@ -98,27 +117,32 @@ pub struct TaskProvenance {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct ServiceProvenance {
     service_id: ServiceId,
 }
 
 impl InputProvenance {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn system() -> Self {
         Self::from_origin(InputOrigin::System)
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn ui(surface: SurfaceRef) -> Self {
         Self::from_origin(InputOrigin::Ui(SurfaceProvenance { surface }))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn adapter(surface: SurfaceRef) -> Self {
         Self::from_origin(InputOrigin::Adapter(SurfaceProvenance { surface }))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn task(task_id: TaskIntentId, attempt_id: TaskIntentAttemptId) -> Self {
         Self::from_origin(InputOrigin::Task(TaskProvenance {
             task_id,
@@ -128,11 +152,13 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn service(service_id: ServiceId) -> Self {
         Self::from_origin(InputOrigin::Service(ServiceProvenance { service_id }))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn window(surface: SurfaceRef) -> Self {
         Self::from_origin(InputOrigin::Window(SurfaceProvenance { surface }))
     }
@@ -185,42 +211,49 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_correlation(mut self, id: CorrelationId) -> Self {
         self.correlation = Correlation::Present(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn without_correlation(mut self) -> Self {
         self.correlation = Correlation::Absent;
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_parent_correlation(mut self, id: CorrelationId) -> Self {
         self.parent_correlation = Correlation::Present(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn without_parent_correlation(mut self) -> Self {
         self.parent_correlation = Correlation::Absent;
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = Some(sequence);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn without_sequence(mut self) -> Self {
         self.sequence = None;
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn source(&self) -> &InputSourceId {
         match &self.origin {
             InputOrigin::System => &INPUT_SOURCE_SYSTEM,
@@ -233,11 +266,13 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn origin(&self) -> &InputOrigin {
         &self.origin
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn surface(&self) -> Option<SurfaceRef> {
         match &self.origin {
             InputOrigin::Ui(value) | InputOrigin::Adapter(value) | InputOrigin::Window(value) => {
@@ -249,6 +284,7 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn task_id(&self) -> Option<TaskIntentId> {
         match &self.origin {
             InputOrigin::Task(value) => Some(value.task_id),
@@ -257,6 +293,7 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn task_attempt_id(&self) -> Option<TaskIntentAttemptId> {
         match &self.origin {
             InputOrigin::Task(value) => Some(value.task_attempt_id),
@@ -265,6 +302,7 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn service_id(&self) -> Option<ServiceId> {
         match &self.origin {
             InputOrigin::Service(value) => Some(value.service_id.clone()),
@@ -273,26 +311,31 @@ impl InputProvenance {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn correlation(&self) -> Correlation {
         self.correlation
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn parent_correlation(&self) -> Correlation {
         self.parent_correlation
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn correlation_id(&self) -> Option<CorrelationId> {
         self.correlation.id()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn parent_correlation_id(&self) -> Option<CorrelationId> {
         self.parent_correlation.id()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn sequence(&self) -> Option<u64> {
         self.sequence
     }

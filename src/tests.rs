@@ -150,6 +150,82 @@ fn crate_forbids_unsafe_code() {
 }
 
 #[test]
+fn public_errors_implement_display_and_error() {
+    fn assert_error<T: Error + std::fmt::Display>() {}
+
+    assert_error::<RuntimeInputError>();
+    assert_error::<RuntimeQueueError<UiInput<()>>>();
+    assert_error::<RuntimeDrainError>();
+    assert_error::<AppProxyError<()>>();
+    assert_error::<WakeError>();
+    assert_error::<SurfaceError>();
+    assert_error::<ReducerFailure>();
+    assert_error::<ResourceStateError>();
+    assert_error::<SubscriptionError>();
+    assert_error::<ManifestValidationError>();
+    assert_error::<SnapshotError>();
+    assert_error::<NameError>();
+    assert_error::<CorrelationError>();
+    assert_error::<ProvenanceError>();
+    assert_error::<VersionError>();
+
+    let provenance = InputProvenance::system().with_sequence(4);
+    let input_error = TaskInput::<()>::new((), provenance.clone()).unwrap_err();
+    assert_eq!(input_error.lane(), RuntimeLane::Task);
+    assert_eq!(input_error.provenance(), &provenance);
+    assert_eq!(
+        input_error.to_string(),
+        "runtime input has invalid provenance for Task lane"
+    );
+
+    let reducer_failure =
+        ReducerFailure::new("counter reducer rejected input").with_provenance(provenance.clone());
+    assert_eq!(reducer_failure.message(), "counter reducer rejected input");
+    assert_eq!(reducer_failure.provenance(), Some(&provenance));
+    assert_eq!(
+        reducer_failure.to_string(),
+        "counter reducer rejected input"
+    );
+
+    struct NonDebug(u8);
+
+    let mut runtime = Runtime::<(), (), NonDebug>::new_with_queue_policy(
+        (),
+        (),
+        RuntimeQueuePolicy::new(0, 1, 1),
+    );
+    let queue_error = runtime
+        .enqueue_ui(UiInput::new(NonDebug(7), InputProvenance::system()).unwrap())
+        .unwrap_err();
+    assert_eq!(
+        queue_error.to_string(),
+        "runtime Ui queue overflow at capacity 0"
+    );
+    let NonDebug(value) = queue_error.into_rejected().into_app_input().into_payload();
+    assert_eq!(value, 7);
+
+    let proxy = AppProxy::<NonDebug>::new(FakeWakeBridge::default(), QueuePolicy::bounded(0));
+    let proxy_error = proxy
+        .send_task(
+            TaskInput::new(
+                NonDebug(9),
+                InputProvenance::task(TaskIntentId::from_u64(4), TaskIntentAttemptId::from_u64(1)),
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        proxy_error.to_string(),
+        "app proxy queue overflow at capacity 0"
+    );
+    let ProxyInput::Task(rejected) = proxy_error.into_rejected() else {
+        panic!("queue rejection must preserve the rejected task input");
+    };
+    let NonDebug(value) = rejected.into_app_input().into_payload();
+    assert_eq!(value, 9);
+}
+
+#[test]
 fn typed_ids_are_stable_and_debuggable() {
     assert_eq!(AppId::new("photo.lab").as_str(), "photo.lab");
     assert_eq!(SurfaceId::from_u64(7).as_u64(), 7);

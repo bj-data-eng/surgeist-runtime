@@ -16,18 +16,24 @@ use super::{
 use crate::ids::CheckedNext;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Identifies a provenance that cannot enter the requested runtime lane.
 pub enum RuntimeLane {
+    /// Input originating from a UI, adapter, window, or system source.
     Ui,
+    /// Input originating from one specific task attempt.
     Task,
+    /// Input originating from one registered service.
     Service,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A UI-originated input validated against runtime lane provenance rules.
 pub struct UiInput<Input> {
     input: AppInput<Input>,
 }
 
 impl<Input> UiInput<Input> {
+    /// Validates UI-compatible provenance and wraps an owned payload.
     pub fn new(payload: Input, provenance: InputProvenance) -> Result<Self, RuntimeInputError> {
         if provenance.task_id().is_some() || provenance.service_id().is_some() {
             return Err(RuntimeInputError::wrong_lane(RuntimeLane::Ui, provenance));
@@ -39,17 +45,20 @@ impl<Input> UiInput<Input> {
     }
 
     #[must_use]
+    /// Consumes this wrapper and returns its owned application input.
     pub fn into_app_input(self) -> AppInput<Input> {
         self.input
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A task-originated input validated against runtime lane provenance rules.
 pub struct TaskInput<Input> {
     input: AppInput<Input>,
 }
 
 impl<Input> TaskInput<Input> {
+    /// Validates task ID and attempt provenance and wraps an owned payload.
     pub fn new(payload: Input, provenance: InputProvenance) -> Result<Self, RuntimeInputError> {
         if provenance.task_id().is_none() || provenance.task_attempt_id().is_none() {
             return Err(RuntimeInputError::wrong_lane(RuntimeLane::Task, provenance));
@@ -61,17 +70,20 @@ impl<Input> TaskInput<Input> {
     }
 
     #[must_use]
+    /// Consumes this wrapper and returns its owned application input.
     pub fn into_app_input(self) -> AppInput<Input> {
         self.input
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A service-originated input validated against runtime lane provenance rules.
 pub struct ServiceInput<Input> {
     input: AppInput<Input>,
 }
 
 impl<Input> ServiceInput<Input> {
+    /// Validates service provenance and wraps an owned payload.
     pub fn new(payload: Input, provenance: InputProvenance) -> Result<Self, RuntimeInputError> {
         if provenance.service_id().is_none() {
             return Err(RuntimeInputError::wrong_lane(
@@ -86,12 +98,14 @@ impl<Input> ServiceInput<Input> {
     }
 
     #[must_use]
+    /// Consumes this wrapper and returns its owned application input.
     pub fn into_app_input(self) -> AppInput<Input> {
         self.input
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Details of an input rejected before it can enter a runtime lane.
 pub struct RuntimeInputError {
     lane: RuntimeLane,
     provenance: InputProvenance,
@@ -103,21 +117,36 @@ impl RuntimeInputError {
     }
 
     #[must_use]
+    /// Returns the lane whose provenance requirements rejected the input.
     pub const fn lane(&self) -> RuntimeLane {
         self.lane
     }
 
     #[must_use]
+    /// Returns the exact provenance that was rejected without modification.
     pub const fn provenance(&self) -> &InputProvenance {
         &self.provenance
     }
 }
+
+impl fmt::Display for RuntimeInputError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "runtime input has invalid provenance for {:?} lane",
+            self.lane
+        )
+    }
+}
+
+impl Error for RuntimeInputError {}
 
 const DEFAULT_UI_QUEUE_CAPACITY: usize = 65_536;
 const DEFAULT_TASK_QUEUE_CAPACITY: usize = 65_536;
 const DEFAULT_SERVICE_QUEUE_CAPACITY: usize = 65_536;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Immutable capacity limits for the UI, task, and service runtime queues.
 pub struct RuntimeQueuePolicy {
     ui_capacity: usize,
     task_capacity: usize,
@@ -246,6 +275,7 @@ impl<T> fmt::Display for RuntimeQueueError<T> {
 
 impl<T: fmt::Debug> Error for RuntimeQueueError<T> {}
 
+/// Deterministic owner of application state, registered surfaces, queues, and diagnostics.
 pub struct Runtime<State = (), R = (), Input = ()> {
     state: State,
     reducer: R,
@@ -298,16 +328,19 @@ impl<State, R, Input> Runtime<State, R, Input> {
     }
 
     #[must_use]
+    /// Borrows the current application state.
     pub const fn state(&self) -> &State {
         &self.state
     }
 
     #[must_use]
+    /// Returns the current checked state revision.
     pub const fn state_version(&self) -> StateVersion {
         self.state_version
     }
 
     #[must_use]
+    /// Borrows runtime-owned diagnostics.
     pub const fn diagnostics(&self) -> &DiagnosticLog {
         &self.diagnostics
     }
@@ -529,6 +562,7 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Ok(self.coordination.unsubscribe(key))
     }
 
+    /// Enqueues a UI input or atomically returns it unchanged on capacity overflow.
     pub fn enqueue_ui(
         &mut self,
         input: UiInput<Input>,
@@ -550,6 +584,7 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Ok(())
     }
 
+    /// Enqueues a task input or atomically returns it unchanged on capacity overflow.
     pub fn enqueue_task(
         &mut self,
         input: TaskInput<Input>,
@@ -571,6 +606,7 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Ok(())
     }
 
+    /// Enqueues a service input or atomically returns it unchanged on capacity overflow.
     pub fn enqueue_service(
         &mut self,
         input: ServiceInput<Input>,
@@ -1136,6 +1172,7 @@ where
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct RuntimeBudget {
     max_inputs: usize,
     max_ui_inputs: usize,

@@ -9,33 +9,50 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// Classifies a public runtime state or outcome.
 pub enum DiagnosticSeverity {
+    /// One case of this public runtime contract.
     Info,
+    /// One case of this public runtime contract.
     Warning,
+    /// One case of this public runtime contract.
     Error,
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct DiagnosticCode(Cow<'static, str>);
 
 impl DiagnosticCode {
+    /// A predefined runtime contract identifier.
     pub const UNKNOWN_RETAINED_COMMAND: Self = Self::from_static("unknown_retained_command");
+    /// A predefined runtime contract identifier.
     pub const INVALID_RETAINED_PAYLOAD: Self = Self::from_static("invalid_retained_payload");
+    /// A predefined runtime contract identifier.
     pub const STALE_ELEMENT: Self = Self::from_static("stale_element");
+    /// A predefined runtime contract identifier.
     pub const INELIGIBLE_RETAINED_TARGET: Self = Self::from_static("ineligible_retained_target");
+    /// A predefined runtime contract identifier.
     pub const QUEUE_OVERFLOW: Self = Self::from_static("queue_overflow");
+    /// A predefined runtime contract identifier.
     pub const QUEUE_COALESCED: Self = Self::from_static("queue_coalesced");
+    /// A predefined runtime contract identifier.
     pub const REDUCER_ERROR: Self = Self::from_static("reducer_error");
+    /// A predefined runtime contract identifier.
     pub const EFFECT_FAILED: Self = Self::from_static("effect_failed");
+    /// A predefined runtime contract identifier.
     pub const SERVICE_MAILBOX_OVERFLOW: Self = Self::from_static("service_mailbox_overflow");
+    /// A predefined runtime contract identifier.
     pub const SURFACE_DEGRADED: Self = Self::from_static("surface_degraded");
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(value: impl Into<Cow<'static, str>>) -> Self {
         Self(value.into())
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -46,6 +63,7 @@ impl DiagnosticCode {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct QueueDiagnostic {
     name: String,
     capacity: usize,
@@ -55,6 +73,7 @@ pub struct QueueDiagnostic {
 
 impl QueueDiagnostic {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(name: impl Into<String>, capacity: usize) -> Self {
         Self {
             name: name.into(),
@@ -65,39 +84,46 @@ impl QueueDiagnostic {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn with_dropped(mut self, dropped: usize) -> Self {
         self.dropped = dropped;
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_age_ms(mut self, age_ms: u64) -> Self {
         self.age_ms = Some(age_ms);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn name(&self) -> &str {
         &self.name
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn dropped(&self) -> usize {
         self.dropped
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn age_ms(&self) -> Option<u64> {
         self.age_ms
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct Diagnostic {
     severity: DiagnosticSeverity,
     code: DiagnosticCode,
@@ -117,6 +143,7 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn info(
         code: DiagnosticCode,
         message: impl Into<String>,
@@ -126,6 +153,7 @@ impl Diagnostic {
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn warning(
         code: DiagnosticCode,
         message: impl Into<String>,
@@ -135,6 +163,7 @@ impl Diagnostic {
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn error(
         code: DiagnosticCode,
         message: impl Into<String>,
@@ -144,36 +173,42 @@ impl Diagnostic {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_app(mut self, id: AppId) -> Self {
         self.app_id = Some(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_window(mut self, id: WindowId) -> Self {
         self.window_id = Some(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_root(mut self, id: RootId) -> Self {
         self.root_id = Some(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_scope(mut self, scope: AppScope) -> Self {
         self.scope = Some(scope);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_resource(mut self, id: ResourceId) -> Self {
         self.resource_id = Some(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_task(mut self, id: TaskIntentId, attempt: TaskIntentAttemptId) -> Self {
         self.task_id = Some(id);
         self.task_attempt_id = Some(attempt);
@@ -181,89 +216,106 @@ impl Diagnostic {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_service(mut self, id: ServiceId) -> Self {
         self.service_id = Some(id);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_effect(mut self, effect: impl Into<String>) -> Self {
         self.emitted_effects.push(effect.into());
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn with_queue(mut self, queue: QueueDiagnostic) -> Self {
         self.queue = Some(queue);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn severity(&self) -> DiagnosticSeverity {
         self.severity
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn code(&self) -> &DiagnosticCode {
         &self.code
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn provenance(&self) -> &InputProvenance {
         &self.provenance
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn message(&self) -> &str {
         &self.message
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn app_id(&self) -> Option<&AppId> {
         self.app_id.as_ref()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn window_id(&self) -> Option<WindowId> {
         self.window_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn root_id(&self) -> Option<&RootId> {
         self.root_id.as_ref()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn scope(&self) -> Option<&AppScope> {
         self.scope.as_ref()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn resource_id(&self) -> Option<&ResourceId> {
         self.resource_id.as_ref()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn task_id(&self) -> Option<TaskIntentId> {
         self.task_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn task_attempt_id(&self) -> Option<TaskIntentAttemptId> {
         self.task_attempt_id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn service_id(&self) -> Option<&ServiceId> {
         self.service_id.as_ref()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn emitted_effects(&self) -> &[String] {
         &self.emitted_effects
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn queue(&self) -> Option<&QueueDiagnostic> {
         self.queue.as_ref()
     }
@@ -294,6 +346,7 @@ impl Diagnostic {
 }
 
 #[derive(Clone, Debug)]
+/// A public runtime value with a private representation.
 pub struct DiagnosticLog {
     capacity: usize,
     entries: VecDeque<Diagnostic>,
@@ -303,6 +356,7 @@ pub struct DiagnosticLog {
 
 impl DiagnosticLog {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             capacity,
@@ -312,6 +366,7 @@ impl DiagnosticLog {
         }
     }
 
+    /// Performs the associated runtime operation.
     pub fn push(&mut self, diagnostic: Diagnostic) {
         *self.counts.entry(diagnostic.code().clone()).or_default() += 1;
         if self.capacity == 0 {
@@ -326,16 +381,19 @@ impl DiagnosticLog {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn entries(&self) -> Vec<Diagnostic> {
         self.entries.iter().cloned().collect()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn dropped_oldest(&self) -> usize {
         self.dropped_oldest
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn count(&self, code: &DiagnosticCode) -> usize {
         self.counts.get(code).copied().unwrap_or(0)
     }

@@ -7,19 +7,25 @@ use super::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Classifies a public runtime state or outcome.
 pub enum RedrawTarget {
+    /// One case of this public runtime contract.
     All,
+    /// One case of this public runtime contract.
     Surface(SurfaceRef),
+    /// One case of this public runtime contract.
     Window(WindowId),
 }
 
 impl RedrawTarget {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn all() -> Self {
         Self::All
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn surface(surface: SurfaceRef) -> Self {
         Self::Surface(surface)
     }
@@ -269,18 +275,21 @@ pub enum AppEffectPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct RequestRedrawEffect {
     target: RedrawTarget,
 }
 
 impl RequestRedrawEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn target(&self) -> &RedrawTarget {
         &self.target
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct PersistEffect {
     key: String,
     scope: AppScope,
@@ -288,23 +297,27 @@ pub struct PersistEffect {
 
 impl PersistEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn key(&self) -> &str {
         &self.key
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct DiagnosticEffect {
     diagnostic: Box<Diagnostic>,
 }
 
 impl DiagnosticEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn diagnostic(&self) -> &Diagnostic {
         self.diagnostic.as_ref()
     }
@@ -338,6 +351,7 @@ impl LoadResourceEffect {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct InvalidateResourceEffect {
     id: ResourceId,
     reason: String,
@@ -345,17 +359,20 @@ pub struct InvalidateResourceEffect {
 
 impl InvalidateResourceEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn id(&self) -> &ResourceId {
         &self.id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn reason(&self) -> &str {
         &self.reason
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct StartTaskEffect {
     name: TaskIntentName,
     key: TaskIntentKey,
@@ -364,34 +381,40 @@ pub struct StartTaskEffect {
 
 impl StartTaskEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn name(&self) -> &TaskIntentName {
         &self.name
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn key(&self) -> &TaskIntentKey {
         &self.key
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct CancelTaskEffect {
     handle: TaskIntentHandle,
 }
 
 impl CancelTaskEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn handle(&self) -> TaskIntentHandle {
         self.handle
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct ReprioritizeTaskEffect {
     handle: TaskIntentHandle,
     priority: TaskPriorityHint,
@@ -399,41 +422,48 @@ pub struct ReprioritizeTaskEffect {
 
 impl ReprioritizeTaskEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn handle(&self) -> TaskIntentHandle {
         self.handle
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn priority(&self) -> TaskPriorityHint {
         self.priority
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct StartServiceEffect {
     id: ServiceId,
 }
 
 impl StartServiceEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct StopServiceEffect {
     id: ServiceId,
 }
 
 impl StopServiceEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct CallServiceEffect {
     id: ServiceId,
     command: ServiceCommandName,
@@ -443,27 +473,32 @@ pub struct CallServiceEffect {
 
 impl CallServiceEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn command(&self) -> &ServiceCommandName {
         &self.command
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn payload(&self) -> &ServiceCommandPayload {
         &self.payload
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn correlation(&self) -> CorrelationId {
         self.correlation
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct ServiceDiagnosticEffect {
     id: ServiceId,
     diagnostic: Box<Diagnostic>,
@@ -471,17 +506,20 @@ pub struct ServiceDiagnosticEffect {
 
 impl ServiceDiagnosticEffect {
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn id(&self) -> &ServiceId {
         &self.id
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn diagnostic(&self) -> &Diagnostic {
         self.diagnostic.as_ref()
     }
 }
 
 #[derive(Clone, Debug, Default)]
+/// A public runtime value with a private representation.
 pub struct EffectBatch {
     effects: Vec<AppEffect>,
 }
@@ -618,17 +656,20 @@ impl EffectOutcome {
 
 impl EffectBatch {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new() -> Self {
         Self::default()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn push(mut self, effect: AppEffect) -> Self {
         self.effects.push(effect);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn effects(&self) -> &[AppEffect] {
         &self.effects
     }

@@ -16,6 +16,7 @@ pub struct WakeError {
 
 impl WakeError {
     #[must_use]
+    /// Creates a wake failure from a host-provided diagnostic message.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -23,6 +24,7 @@ impl WakeError {
     }
 
     #[must_use]
+    /// Returns the host-provided diagnostic message.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -43,16 +45,21 @@ impl Error for WakeError {}
 /// indirectly, and must not wait for a drain to occur. The runtime never calls
 /// this bridge while holding the proxy mutex.
 pub trait WakeBridge: Send + Sync + 'static {
+    /// Requests one future host turn without synchronously draining the proxy.
     fn wake(&self) -> Result<(), WakeError>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// An input awaiting transfer from a host-facing proxy into runtime.
 pub enum ProxyInput<Input> {
+    /// A validated input from a task attempt.
     Task(TaskInput<Input>),
+    /// A validated input from a service.
     Service(ServiceInput<Input>),
 }
 
 #[derive(Clone)]
+/// Thread-safe staging queue that asks a host for future drain turns.
 pub struct AppProxy<Input> {
     shared: Arc<Shared<Input>>,
     policy: QueuePolicy,
@@ -61,6 +68,7 @@ pub struct AppProxy<Input> {
 
 impl<Input> AppProxy<Input> {
     #[must_use]
+    /// Creates an empty proxy with immutable queue policy and wake bridge.
     pub fn new(wake: impl WakeBridge, policy: QueuePolicy) -> Self {
         Self {
             shared: Arc::new(Shared::default()),
@@ -69,14 +77,17 @@ impl<Input> AppProxy<Input> {
         }
     }
 
+    /// Enqueues a task input and requests a future host turn when needed.
     pub fn send_task(&self, input: TaskInput<Input>) -> Result<(), AppProxyError<Input>> {
         self.enqueue(ProxyInput::Task(input))
     }
 
+    /// Enqueues a service input and requests a future host turn when needed.
     pub fn send_service(&self, input: ServiceInput<Input>) -> Result<(), AppProxyError<Input>> {
         self.enqueue(ProxyInput::Service(input))
     }
 
+    /// Removes up to `limit` inputs in FIFO order and requests a continuation wake if needed.
     pub fn drain_pending(&self, limit: NonZeroUsize) -> ProxyDrainReport<Input> {
         let mut state = self.lock_state();
         while matches!(&state.phase, ProxyPhase::Waking(_))
@@ -126,6 +137,7 @@ impl<Input> AppProxy<Input> {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn pending_len(&self) -> usize {
         self.lock_state().queue.len()
     }
@@ -323,17 +335,20 @@ enum WakeOwner {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct QueuePolicy {
     capacity: usize,
 }
 
 impl QueuePolicy {
     #[must_use]
+    /// Constructs this runtime value.
     pub const fn bounded(capacity: usize) -> Self {
         Self { capacity }
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
@@ -347,12 +362,16 @@ impl Default for QueuePolicy {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+/// Classifies a proxy rejection while preserving the rejected input.
 pub enum AppProxyErrorCode {
+    /// The immutable queue capacity was already reached.
     QueueOverflow,
+    /// The host wake bridge rejected scheduling a future drain turn.
     WakeFailed,
 }
 
 #[derive(Clone, Debug)]
+/// A lossless proxy rejection with private diagnostic state.
 pub struct AppProxyError<Input> {
     code: AppProxyErrorCode,
     capacity: Option<usize>,
@@ -380,26 +399,31 @@ impl<Input> AppProxyError<Input> {
     }
 
     #[must_use]
+    /// Returns why the proxy rejected the input.
     pub const fn code(&self) -> AppProxyErrorCode {
         self.code
     }
 
     #[must_use]
+    /// Returns the capacity for an overflow rejection.
     pub const fn capacity(&self) -> Option<usize> {
         self.capacity
     }
 
     #[must_use]
+    /// Borrows the exact task or service input that was not queued.
     pub fn rejected(&self) -> &ProxyInput<Input> {
         &self.rejected
     }
 
     #[must_use]
+    /// Consumes this error and recovers the exact task or service input without a `Debug` bound.
     pub fn into_rejected(self) -> ProxyInput<Input> {
         self.rejected
     }
 
     #[must_use]
+    /// Returns the host wake failure when wake scheduling caused the rejection.
     pub fn wake_error(&self) -> Option<&WakeError> {
         self.wake_error.as_ref()
     }
@@ -433,6 +457,7 @@ impl<Input: fmt::Debug> Error for AppProxyError<Input> {
 }
 
 #[must_use]
+/// A public runtime value with a private representation.
 pub struct ProxyDrainReport<Input> {
     drained: Vec<ProxyInput<Input>>,
     remaining_len: usize,
@@ -453,26 +478,31 @@ impl<Input> ProxyDrainReport<Input> {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn drained(&self) -> &[ProxyInput<Input>] {
         &self.drained
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn into_drained(self) -> Vec<ProxyInput<Input>> {
         self.drained
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn remaining_len(&self) -> usize {
         self.remaining_len
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn has_remaining(&self) -> bool {
         self.remaining_len != 0
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn continuation_wake_error(&self) -> Option<&WakeError> {
         self.continuation_wake_error.as_ref()
     }

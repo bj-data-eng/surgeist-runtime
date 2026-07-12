@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::HashMap, error::Error, fmt};
 use super::{CustomScopeId, ResourceId, ServiceId, SurfaceId, SurfaceRef, TaskIntentKey, WindowId};
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct ScopePathSegment {
     namespace: String,
     value: String,
@@ -10,6 +11,7 @@ pub struct ScopePathSegment {
 
 impl ScopePathSegment {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(namespace: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             namespace: namespace.into(),
@@ -18,23 +20,27 @@ impl ScopePathSegment {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn namespace(&self) -> &str {
         &self.namespace
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn value(&self) -> &str {
         &self.value
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// A public runtime value with a private representation.
 pub struct AppScope {
     segments: Vec<ScopePathSegment>,
 }
 
 impl AppScope {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn app() -> Self {
         Self {
             segments: Vec::new(),
@@ -42,63 +48,75 @@ impl AppScope {
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn window(id: WindowId) -> Self {
         Self::app().then(ScopePathSegment::new("window", id.as_u64().to_string()))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn surface(id: SurfaceId) -> Self {
         Self::app().then(ScopePathSegment::new("surface", id.as_u64().to_string()))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn resource(id: ResourceId) -> Self {
         Self::app().then(ScopePathSegment::new("resource", id.as_str()))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn custom(id: impl Into<CustomScopeId>) -> Self {
         let id = id.into();
         Self::app().then(ScopePathSegment::new("custom", id.as_str()))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn workspace(value: impl Into<String>) -> Self {
         Self::app().then(ScopePathSegment::new("workspace", value))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn document(value: impl Into<String>) -> Self {
         Self::app().then(ScopePathSegment::new("document", value))
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn widget(value: impl Into<String>) -> Self {
         Self::app().then(ScopePathSegment::new("widget", value))
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn then(mut self, segment: ScopePathSegment) -> Self {
         self.segments.push(segment);
         self
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn segments(&self) -> &[ScopePathSegment] {
         &self.segments
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn is_app(&self) -> bool {
         self.segments.is_empty()
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn resource_id(&self) -> Option<ResourceId> {
         self.last_value("resource").map(ResourceId::new)
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn window_id(&self) -> Option<WindowId> {
         self.last_value("window")
             .and_then(|value| value.parse().ok())
@@ -106,6 +124,7 @@ impl AppScope {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn surface_id(&self) -> Option<SurfaceId> {
         self.last_value("surface")
             .and_then(|value| value.parse().ok())
@@ -134,25 +153,32 @@ impl From<String> for CustomScopeId {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SubscriptionTargetKindId(Cow<'static, str>);
 
 impl SubscriptionTargetKindId {
+    /// A predefined runtime contract identifier.
     pub const TASK: Self = Self(Cow::Borrowed("task"));
+    /// A predefined runtime contract identifier.
     pub const RESOURCE: Self = Self(Cow::Borrowed("resource"));
+    /// A predefined runtime contract identifier.
     pub const SERVICE: Self = Self(Cow::Borrowed("service"));
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(value: impl Into<String>) -> Self {
         Self(Cow::Owned(value.into()))
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+/// A public runtime value with a private representation.
 pub struct SubscriptionTarget {
     kind: SubscriptionTargetKindId,
     key: String,
@@ -160,6 +186,7 @@ pub struct SubscriptionTarget {
 
 impl SubscriptionTarget {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(kind: SubscriptionTargetKindId, key: impl Into<String>) -> Self {
         Self {
             kind,
@@ -168,26 +195,31 @@ impl SubscriptionTarget {
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn task(key: TaskIntentKey) -> Self {
         Self::new(SubscriptionTargetKindId::TASK, key.as_str())
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn resource(id: ResourceId) -> Self {
         Self::new(SubscriptionTargetKindId::RESOURCE, id.as_str())
     }
 
     #[must_use]
+    /// Constructs this runtime value.
     pub fn service(id: ServiceId) -> Self {
         Self::new(SubscriptionTargetKindId::SERVICE, id.as_str())
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn kind(&self) -> &SubscriptionTargetKindId {
         &self.kind
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub fn key(&self) -> &str {
         &self.key
     }
@@ -196,9 +228,12 @@ impl SubscriptionTarget {
 /// The relative importance of a subscription when aggregates are queried.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum SubscriptionPriority {
+    /// One case of this public runtime contract.
     Low,
     #[default]
+    /// One case of this public runtime contract.
     Normal,
+    /// One case of this public runtime contract.
     High,
 }
 
@@ -216,6 +251,7 @@ pub struct SubscriptionKey {
 
 impl SubscriptionKey {
     #[must_use]
+    /// Constructs this runtime value.
     pub fn new(
         target: SubscriptionTarget,
         scope: AppScope,
@@ -231,21 +267,25 @@ impl SubscriptionKey {
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn target(&self) -> &SubscriptionTarget {
         &self.target
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn scope(&self) -> &AppScope {
         &self.scope
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn observer(&self) -> SurfaceRef {
         self.observer
     }
 
     #[must_use]
+    /// Performs the associated runtime operation.
     pub const fn priority(&self) -> SubscriptionPriority {
         self.priority
     }
@@ -322,22 +362,35 @@ impl Subscription {
 /// The exact result of adding or removing one subscription reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SubscriptionChange {
+    /// A previously absent key now has one reference.
     Added {
+        /// The affected complete subscription key.
         key: SubscriptionKey,
+        /// The resulting reference count.
         ref_count: usize,
     },
+    /// An existing key gained another reference.
     Replayed {
+        /// The affected complete subscription key.
         key: SubscriptionKey,
+        /// The resulting reference count.
         ref_count: usize,
     },
+    /// An existing key retained at least one reference after removal.
     Decremented {
+        /// The affected complete subscription key.
         key: SubscriptionKey,
+        /// The resulting reference count.
         ref_count: usize,
     },
+    /// The final reference was removed.
     Removed {
+        /// The affected complete subscription key.
         key: SubscriptionKey,
     },
+    /// The key had no active reference.
     NotFound {
+        /// The queried complete subscription key.
         key: SubscriptionKey,
     },
 }
@@ -371,9 +424,13 @@ impl SubscriptionChange {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SubscriptionErrorCode {
+    /// The observer surface is not registered.
     UnknownObserver,
+    /// The observer surface generation is no longer current.
     StaleObserver,
+    /// The observer surface is in a terminal lifecycle phase.
     TerminalObserver,
+    /// Adding a reference would overflow the counter.
     RefCountOverflow,
 }
 
