@@ -2,14 +2,15 @@ use std::borrow::Cow;
 
 use super::{
     AppScope, CorrelationId, Diagnostic, ResourceId, ServiceCommandName, ServiceCommandPayload,
-    ServiceId, SurfaceId, TaskIntentHandle, TaskIntentKey, TaskIntentName, TaskPriorityHint,
+    ServiceId, SurfaceRef, TaskIntentHandle, TaskIntentKey, TaskIntentName, TaskPriorityHint,
+    WindowId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RedrawTarget {
     All,
-    Surface(SurfaceId),
-    Window(surgeist_window::Id),
+    Surface(SurfaceRef),
+    Window(WindowId),
 }
 
 impl RedrawTarget {
@@ -19,8 +20,8 @@ impl RedrawTarget {
     }
 
     #[must_use]
-    pub const fn surface(id: SurfaceId) -> Self {
-        Self::Surface(id)
+    pub const fn surface(surface: SurfaceRef) -> Self {
+        Self::Surface(surface)
     }
 }
 

@@ -379,7 +379,9 @@ where
                     RedrawTarget::All => {
                         report.redraw_requests.extend(self.surfaces.keys().copied());
                     }
-                    RedrawTarget::Surface(id) => report.redraw_requests.push(*id),
+                    RedrawTarget::Surface(surface) => {
+                        report.redraw_requests.push(surface.surface_id());
+                    }
                     RedrawTarget::Window(window_id) => {
                         report
                             .redraw_requests

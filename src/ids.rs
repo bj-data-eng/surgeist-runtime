@@ -1,3 +1,5 @@
+use std::{error::Error, fmt, num::NonZeroU64};
+
 macro_rules! string_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -45,8 +47,81 @@ string_id!(ExpressionId);
 string_id!(CalcId);
 string_id!(ValueExprId);
 
+numeric_id!(WindowId);
 numeric_id!(SurfaceId);
+numeric_id!(ElementId);
+numeric_id!(SurfaceGeneration);
+numeric_id!(SurfaceInvalidationGeneration);
+numeric_id!(ResourceGeneration);
 numeric_id!(CorrelationId);
+
+impl SurfaceGeneration {
+    #[must_use]
+    pub const fn initial() -> Self {
+        Self(0)
+    }
+}
+
+impl SurfaceInvalidationGeneration {
+    #[must_use]
+    pub const fn initial() -> Self {
+        Self(0)
+    }
+}
+
+impl ResourceGeneration {
+    #[must_use]
+    pub const fn initial() -> Self {
+        Self(0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ResourceOperationId(NonZeroU64);
+
+impl ResourceOperationId {
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum VersionError {
+    Overflow,
+}
+
+impl fmt::Display for VersionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Overflow => formatter.write_str("version overflow"),
+        }
+    }
+}
+
+impl Error for VersionError {}
+
+pub(crate) trait CheckedNext: Sized {
+    fn checked_next(self) -> Result<Self, VersionError>;
+}
+
+macro_rules! checked_generation {
+    ($name:ident) => {
+        impl CheckedNext for $name {
+            fn checked_next(self) -> Result<Self, VersionError> {
+                self.0
+                    .checked_add(1)
+                    .map(Self)
+                    .ok_or(VersionError::Overflow)
+            }
+        }
+    };
+}
+
+checked_generation!(SurfaceGeneration);
+checked_generation!(SurfaceInvalidationGeneration);
+checked_generation!(ResourceGeneration);
 
 impl Default for AppId {
     fn default() -> Self {

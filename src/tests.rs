@@ -15,6 +15,239 @@ fn typed_ids_are_stable_and_debuggable() {
 }
 
 #[test]
+fn runtime_owned_surface_primitives_round_trip_for_root_adapters() {
+    let window = WindowId::from_u64(0);
+    let surface = SurfaceId::from_u64(0);
+    let element = ElementId::from_u64(0);
+    let generation = SurfaceGeneration::from_u64(0);
+    let invalidation = SurfaceInvalidationGeneration::from_u64(0);
+    let size = SurfaceSize::new(0, 480);
+    let point = SurfacePoint::new(-12, i32::MAX);
+
+    assert_eq!(window.as_u64(), 0);
+    assert_eq!(surface.as_u64(), 0);
+    assert_eq!(element.as_u64(), 0);
+    assert_eq!(generation, SurfaceGeneration::initial());
+    assert_eq!(invalidation, SurfaceInvalidationGeneration::initial());
+    assert_eq!(size.width(), 0);
+    assert_eq!(size.height(), 480);
+    assert_eq!(point.x(), -12);
+    assert_eq!(point.y(), i32::MAX);
+    assert_eq!(SurfacePoint::origin(), SurfacePoint::default());
+}
+
+#[test]
+fn surface_root_registration_requires_phases_and_rejects_duplicates() {
+    let element = ElementId::from_u64(7);
+    let empty = ElementRegistration::try_new(element, [] as [ElementPhase; 0]).unwrap_err();
+    assert_eq!(empty.code(), SurfaceErrorCode::MissingElementPhase);
+
+    let registration = ElementRegistration::try_new(
+        element,
+        [
+            ElementPhase::Capture,
+            ElementPhase::Target,
+            ElementPhase::Bubble,
+        ],
+    )
+    .unwrap();
+    let mut root = SurfaceRoot::new(RootId::new("main"));
+    root.register_element(registration.clone()).unwrap();
+
+    let duplicate = root.register_element(registration).unwrap_err();
+    assert_eq!(duplicate.code(), SurfaceErrorCode::DuplicateElement);
+    assert_eq!(root.elements().get(element).unwrap().phases().count(), 3);
+}
+
+#[test]
+fn surface_route_requires_one_ordered_target() {
+    let reference = SurfaceRef::new(SurfaceId::from_u64(3), SurfaceGeneration::initial());
+    let element = ElementId::from_u64(4);
+
+    let empty = SurfaceRoute::try_new(reference, []).unwrap_err();
+    assert_eq!(empty.code(), SurfaceErrorCode::EmptyRoute);
+
+    let missing = SurfaceRoute::try_new(
+        reference,
+        [SurfaceRouteStep::new(element, ElementPhase::Capture)],
+    )
+    .unwrap_err();
+    assert_eq!(missing.code(), SurfaceErrorCode::MissingRouteTarget);
+
+    let multiple = SurfaceRoute::try_new(
+        reference,
+        [
+            SurfaceRouteStep::new(element, ElementPhase::Target),
+            SurfaceRouteStep::new(element, ElementPhase::Target),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(multiple.code(), SurfaceErrorCode::MultipleRouteTargets);
+
+    let out_of_order = SurfaceRoute::try_new(
+        reference,
+        [
+            SurfaceRouteStep::new(element, ElementPhase::Bubble),
+            SurfaceRouteStep::new(element, ElementPhase::Target),
+        ],
+    )
+    .unwrap_err();
+    assert_eq!(
+        out_of_order.code(),
+        SurfaceErrorCode::InvalidRoutePhaseOrder
+    );
+
+    let route = SurfaceRoute::try_new(
+        reference,
+        [
+            SurfaceRouteStep::new(element, ElementPhase::Capture),
+            SurfaceRouteStep::new(element, ElementPhase::Target),
+            SurfaceRouteStep::new(element, ElementPhase::Bubble),
+        ],
+    )
+    .unwrap();
+    assert_eq!(route.target(), SurfaceElementRef::new(reference, element));
+}
+
+#[test]
+fn ui_surface_rejects_mismatched_stale_and_unknown_local_references() {
+    let element = ElementId::from_u64(2);
+    let mut root = SurfaceRoot::new(RootId::new("main"));
+    root.register_element(ElementRegistration::try_new(element, [ElementPhase::Target]).unwrap())
+        .unwrap();
+    let surface = UiSurface::try_new(SurfaceId::from_u64(1), WindowId::from_u64(9), root).unwrap();
+
+    let mismatch = SurfaceElementRef::new(
+        SurfaceRef::new(SurfaceId::from_u64(8), SurfaceGeneration::initial()),
+        element,
+    );
+    assert_eq!(
+        surface.validate_element_ref(mismatch).unwrap_err().code(),
+        SurfaceErrorCode::SurfaceMismatch
+    );
+
+    let stale = SurfaceElementRef::new(
+        SurfaceRef::new(SurfaceId::from_u64(1), SurfaceGeneration::from_u64(1)),
+        element,
+    );
+    assert_eq!(
+        surface.validate_element_ref(stale).unwrap_err().code(),
+        SurfaceErrorCode::StaleSurfaceGeneration
+    );
+
+    let unknown = SurfaceElementRef::new(surface.surface_ref(), ElementId::from_u64(3));
+    assert_eq!(
+        surface.validate_element_ref(unknown).unwrap_err().code(),
+        SurfaceErrorCode::UnknownElement
+    );
+
+    let route = SurfaceRoute::try_new(
+        surface.surface_ref(),
+        [SurfaceRouteStep::new(element, ElementPhase::Target)],
+    )
+    .unwrap();
+    assert_eq!(surface.validate_route(&route).unwrap(), route.target());
+    assert_eq!(
+        surface
+            .validate_element(surface.element_ref(element).unwrap(), ElementPhase::Capture)
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::IneligibleElementTarget
+    );
+}
+
+#[test]
+fn ui_surface_local_mutations_are_idempotent_and_invalidate_changes() {
+    let element = ElementId::from_u64(3);
+    let mut root = SurfaceRoot::new(RootId::new("main"));
+    root.register_element(ElementRegistration::try_new(element, [ElementPhase::Target]).unwrap())
+        .unwrap();
+    let mut surface =
+        UiSurface::try_new(SurfaceId::from_u64(1), WindowId::from_u64(9), root).unwrap();
+
+    let unchanged = surface.set_scroll_offset(SurfacePoint::origin()).unwrap();
+    assert!(!unchanged.changed());
+    assert_eq!(unchanged.invalidation_generation(), None);
+    assert!(!unchanged.redraw_required());
+
+    let changed = surface.set_scroll_offset(SurfacePoint::new(-1, 2)).unwrap();
+    assert!(changed.changed());
+    assert_eq!(
+        changed.invalidation_generation(),
+        Some(SurfaceInvalidationGeneration::initial())
+    );
+    assert_eq!(surface.scroll_offset(), SurfacePoint::new(-1, 2));
+    assert_eq!(surface.invalidations().len(), 1);
+
+    assert!(
+        surface
+            .set_viewport(SurfaceSize::new(640, 480))
+            .unwrap()
+            .changed()
+    );
+    let reference = surface.element_ref(element).unwrap();
+    assert!(surface.set_focus(Some(reference)).unwrap().changed());
+    assert!(surface.set_hover(Some(reference)).unwrap().changed());
+    assert!(!surface.set_focus(Some(reference)).unwrap().changed());
+    assert_eq!(surface.focused_element(), Some(reference));
+    assert_eq!(surface.hovered_element(), Some(reference));
+
+    let generation = surface
+        .replace_root(SurfaceRoot::new(RootId::new("replacement")))
+        .unwrap();
+    assert_eq!(generation, SurfaceGeneration::from_u64(1));
+    assert_eq!(surface.focused_element(), None);
+    assert_eq!(surface.hovered_element(), None);
+    assert!(matches!(
+        surface.invalidations().last().map(SurfaceInvalidation::kind),
+        Some(SurfaceInvalidationKind::RootReplaced { surface_generation })
+            if *surface_generation == generation
+    ));
+}
+
+#[test]
+fn ui_surface_root_replacement_and_invalidation_overflow_are_atomic() {
+    let mut surface = UiSurface::try_new(
+        SurfaceId::from_u64(1),
+        WindowId::from_u64(9),
+        SurfaceRoot::new(RootId::new("before")),
+    )
+    .unwrap();
+
+    surface.set_scroll_offset(SurfacePoint::new(-4, 8)).unwrap();
+    let invalidation_count = surface.invalidations().len();
+    surface.set_generations_for_test(u64::MAX, None);
+    let root_error = surface
+        .replace_root(SurfaceRoot::new(RootId::new("after")))
+        .unwrap_err();
+    assert_eq!(root_error.code(), SurfaceErrorCode::VersionOverflow);
+    assert_eq!(surface.root().id(), &RootId::new("before"));
+    assert_eq!(surface.generation(), SurfaceGeneration::from_u64(u64::MAX));
+    assert_eq!(surface.scroll_offset(), SurfacePoint::new(-4, 8));
+    assert_eq!(surface.invalidations().len(), invalidation_count);
+    assert!(std::error::Error::source(&root_error).is_some());
+
+    surface.set_generations_for_test(0, Some(u64::MAX));
+    let invalidation_error = surface
+        .replace_root(SurfaceRoot::new(RootId::new("after")))
+        .unwrap_err();
+    assert_eq!(invalidation_error.code(), SurfaceErrorCode::VersionOverflow);
+    assert_eq!(surface.root().id(), &RootId::new("before"));
+    assert_eq!(surface.generation(), SurfaceGeneration::initial());
+    assert_eq!(surface.scroll_offset(), SurfacePoint::new(-4, 8));
+    assert_eq!(surface.invalidations().len(), invalidation_count);
+}
+
+fn test_surface(surface_id: u64, window_id: u64, root_id: &str) -> UiSurface {
+    UiSurface::try_new(
+        SurfaceId::from_u64(surface_id),
+        WindowId::from_u64(window_id),
+        SurfaceRoot::new(RootId::new(root_id)),
+    )
+    .expect("test surface construction should be valid")
+}
+
+#[test]
 fn task_intent_identity_types_are_runtime_owned() {
     let name = TaskIntentName::new("search");
     let key = TaskIntentKey::new("search:rust");
@@ -180,128 +413,6 @@ fn zero_capacity_diagnostic_log_counts_without_retaining_entries() {
     assert_eq!(log.count(&DiagnosticCode::QUEUE_OVERFLOW), 1);
 }
 
-#[test]
-fn ui_surface_lifecycle_tracks_native_state() {
-    let mut surface = UiSurface::new(
-        SurfaceId::from_u64(1),
-        surgeist_window::Id::from_u64(10),
-        WindowRoot::new(RootId::new("main")),
-    );
-
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Created);
-    surface.ready();
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Ready);
-    surface.resized(surgeist_window::size(640, 480));
-    assert_eq!(surface.viewport().width, 640.0);
-    surface.hidden();
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Hidden);
-    surface.suspended();
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Suspended);
-    surface.closing();
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Closing);
-    surface.closed();
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Closed);
-    surface.destroyed();
-    assert_eq!(surface.lifecycle(), SurfaceLifecycle::Destroyed);
-}
-
-#[test]
-fn replacing_root_creates_distinct_retained_model() {
-    let window_id = surgeist_window::Id::from_u64(20);
-    let mut surface = UiSurface::new(
-        SurfaceId::from_u64(1),
-        window_id,
-        WindowRoot::new(RootId::new("a")),
-    );
-    let old_retained_root = surface.retained().root();
-
-    surface.replace_root(WindowRoot::new(RootId::new("b")));
-
-    assert_eq!(surface.window_id(), window_id);
-    assert_eq!(surface.root().id(), &RootId::new("b"));
-    assert_ne!(surface.retained().root(), old_retained_root);
-    assert!(
-        surface
-            .invalidations()
-            .contains(&SurfaceInvalidation::RootReplaced)
-    );
-}
-
-#[test]
-fn replacing_root_clears_retained_focus_and_hover_state() {
-    let mut surface = UiSurface::new(
-        SurfaceId::from_u64(1),
-        surgeist_window::Id::from_u64(20),
-        WindowRoot::new(RootId::new("a")),
-    );
-    let retained_root = surface.retained().root().retained_id();
-    surface.set_hovered(Some(retained_root));
-    surface.set_focused(Some(retained_root));
-
-    surface.replace_root(WindowRoot::new(RootId::new("b")));
-
-    assert_eq!(surface.hovered(), None);
-    assert_eq!(surface.focused(), None);
-}
-
-#[test]
-fn terminal_lifecycle_states_are_not_revived_by_native_updates() {
-    let mut closed = UiSurface::new(
-        SurfaceId::from_u64(1),
-        surgeist_window::Id::from_u64(10),
-        WindowRoot::new(RootId::new("closed")),
-    );
-
-    closed.closed();
-    closed.ready();
-    closed.resized(surgeist_window::size(640, 480));
-    closed.hidden();
-    closed.occluded();
-    closed.suspended();
-    closed.closing();
-    assert_eq!(closed.lifecycle(), SurfaceLifecycle::Closed);
-    closed.destroyed();
-    assert_eq!(closed.lifecycle(), SurfaceLifecycle::Destroyed);
-
-    let mut destroyed = UiSurface::new(
-        SurfaceId::from_u64(2),
-        surgeist_window::Id::from_u64(11),
-        WindowRoot::new(RootId::new("destroyed")),
-    );
-
-    destroyed.destroyed();
-    destroyed.ready();
-    destroyed.resized(surgeist_window::size(320, 240));
-    destroyed.hidden();
-    destroyed.occluded();
-    destroyed.suspended();
-    destroyed.closing();
-    destroyed.closed();
-    assert_eq!(destroyed.lifecycle(), SurfaceLifecycle::Destroyed);
-}
-
-#[test]
-fn separate_surfaces_do_not_share_retained_or_invalidations() {
-    let mut one = UiSurface::new(
-        SurfaceId::from_u64(1),
-        surgeist_window::Id::from_u64(1),
-        WindowRoot::new(RootId::new("main")),
-    );
-    let two = UiSurface::new(
-        SurfaceId::from_u64(2),
-        surgeist_window::Id::from_u64(2),
-        WindowRoot::new(RootId::new("main")),
-    );
-
-    one.invalidate(SurfaceInvalidation::SnapshotChanged(
-        StateVersion::from_u64(2),
-    ));
-
-    assert_ne!(one.retained().root(), two.retained().root());
-    assert_eq!(one.invalidations().len(), 1);
-    assert!(two.invalidations().is_empty());
-}
-
 #[derive(Default)]
 struct CounterState {
     value: u32,
@@ -311,7 +422,7 @@ struct CounterState {
 enum CounterInput {
     Increment,
     RedrawAll,
-    RedrawWindow(surgeist_window::Id),
+    RedrawWindow(WindowId),
     Save,
     StartTask,
 }
@@ -391,7 +502,10 @@ impl Reducer<CounterState, CounterInput> for CounterReducer {
             CounterInput::Increment => {
                 state.value += 1;
                 ReducerResult::changed().with_effect(AppEffect::request_redraw(
-                    RedrawTarget::surface(SurfaceId::from_u64(1)),
+                    RedrawTarget::surface(SurfaceRef::new(
+                        SurfaceId::from_u64(1),
+                        SurfaceGeneration::initial(),
+                    )),
                 ))
             }
             CounterInput::RedrawAll => ReducerResult::unchanged()
@@ -437,11 +551,7 @@ fn reducer_returns_effects_without_executing_them() {
 #[test]
 fn runtime_commits_state_before_executing_effects() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.add_surface(UiSurface::new(
-        SurfaceId::from_u64(1),
-        surgeist_window::Id::from_u64(1),
-        WindowRoot::new(RootId::new("main")),
-    ));
+    runtime.add_surface(test_surface(1, 1, "main"));
 
     runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
     let report = runtime.drain_once(RuntimeBudget::default());
@@ -600,16 +710,8 @@ fn runtime_service_queue_overflow_records_diagnostic_and_drops_newest() {
 #[test]
 fn runtime_redraw_all_reports_registered_surface_ids() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.add_surface(UiSurface::new(
-        SurfaceId::from_u64(2),
-        surgeist_window::Id::from_u64(1),
-        WindowRoot::new(RootId::new("secondary")),
-    ));
-    runtime.add_surface(UiSurface::new(
-        SurfaceId::from_u64(1),
-        surgeist_window::Id::from_u64(1),
-        WindowRoot::new(RootId::new("main")),
-    ));
+    runtime.add_surface(test_surface(2, 1, "secondary"));
+    runtime.add_surface(test_surface(1, 1, "main"));
     runtime.enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap());
 
     let report = runtime.drain_once(RuntimeBudget::default());
@@ -622,24 +724,12 @@ fn runtime_redraw_all_reports_registered_surface_ids() {
 
 #[test]
 fn runtime_redraw_window_reports_surfaces_for_that_window() {
-    let target_window = surgeist_window::Id::from_u64(7);
-    let other_window = surgeist_window::Id::from_u64(8);
+    let target_window = WindowId::from_u64(7);
+    let other_window = WindowId::from_u64(8);
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
-    runtime.add_surface(UiSurface::new(
-        SurfaceId::from_u64(1),
-        other_window,
-        WindowRoot::new(RootId::new("other")),
-    ));
-    runtime.add_surface(UiSurface::new(
-        SurfaceId::from_u64(3),
-        target_window,
-        WindowRoot::new(RootId::new("right")),
-    ));
-    runtime.add_surface(UiSurface::new(
-        SurfaceId::from_u64(2),
-        target_window,
-        WindowRoot::new(RootId::new("left")),
-    ));
+    runtime.add_surface(test_surface(1, other_window.as_u64(), "other"));
+    runtime.add_surface(test_surface(3, target_window.as_u64(), "right"));
+    runtime.add_surface(test_surface(2, target_window.as_u64(), "left"));
     runtime.enqueue_ui(
         UiInput::new(
             CounterInput::RedrawWindow(target_window),

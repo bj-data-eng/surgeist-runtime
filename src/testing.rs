@@ -9,11 +9,10 @@ use super::{
     AppEffect, AppInput, AppProxy, AppProxyError, AppProxyErrorCode, CorrelationId, DiagnosticLog,
     InputProvenance, ProxyInput, QueuePolicy, RedrawTarget, Reducer, ReducerResult, ResourceId,
     ResourceState, ResourceStateReadyTransition, ResourceStatus, RootId, Runtime, RuntimeBudget,
-    RuntimeDrainReport, RuntimeInputError, ServiceId, ServiceInput, ServiceStatus, SurfaceId,
-    TaskInput, TaskIntentAttemptId, TaskIntentHandle, TaskIntentId, UiInput, UiSurface, WakeBridge,
-    WindowRoot,
+    RuntimeDrainReport, RuntimeInputError, ServiceId, ServiceInput, ServiceStatus,
+    SurfaceGeneration, SurfaceId, SurfaceRef, SurfaceRoot, TaskInput, TaskIntentAttemptId,
+    TaskIntentHandle, TaskIntentId, UiInput, UiSurface, WakeBridge, WindowId,
 };
-use surgeist_window as window;
 
 #[derive(Clone, Debug, Default)]
 pub struct FakeWakeBridge {
@@ -114,7 +113,7 @@ impl FakeWindowBridge {
         self.redraws.push(surface_id);
     }
 
-    pub fn record_native_command(&mut self, window_id: window::Id, command: impl Into<String>) {
+    pub fn record_native_command(&mut self, window_id: WindowId, command: impl Into<String>) {
         self.commands.push(FakeWindowCommand::Native {
             window_id,
             command: command.into(),
@@ -135,7 +134,7 @@ impl FakeWindowBridge {
         &mut self,
         name: impl Into<String>,
         surface_id: SurfaceId,
-        window_id: window::Id,
+        window_id: WindowId,
         root_id: RootId,
     ) {
         self.commands.push(FakeWindowCommand::OpenSurface {
@@ -152,11 +151,11 @@ pub enum FakeWindowCommand {
     OpenSurface {
         name: String,
         surface_id: SurfaceId,
-        window_id: window::Id,
+        window_id: WindowId,
         root_id: RootId,
     },
     Native {
-        window_id: window::Id,
+        window_id: WindowId,
         command: String,
     },
 }
@@ -235,15 +234,14 @@ where
 
         let surface_id = SurfaceId::from_u64(self.next_surface_id);
         self.next_surface_id += 1;
-        let window_id = window::Id::from_u64(self.next_window_id);
+        let window_id = WindowId::from_u64(self.next_window_id);
         self.next_window_id += 1;
         let root_id = RootId::new(name.clone());
 
-        self.runtime.add_surface(UiSurface::new(
-            surface_id,
-            window_id,
-            WindowRoot::new(root_id.clone()),
-        ));
+        self.runtime.add_surface(
+            UiSurface::try_new(surface_id, window_id, SurfaceRoot::new(root_id.clone()))
+                .expect("headless surface construction should be valid"),
+        );
         self.fake_window
             .record_open_surface(name.clone(), surface_id, window_id, root_id);
         self.surfaces.insert(name, surface_id);
@@ -566,7 +564,7 @@ impl Reducer<ThumbnailImportState, ThumbnailImportInput> for ThumbnailImportRedu
 
         if changed {
             ReducerResult::changed().with_effect(AppEffect::request_redraw(RedrawTarget::surface(
-                state.gallery_surface,
+                SurfaceRef::new(state.gallery_surface, SurfaceGeneration::initial()),
             )))
         } else {
             ReducerResult::unchanged()
@@ -608,8 +606,12 @@ impl Reducer<CounterState, CounterInput> for CounterReducer {
                     .provenance()
                     .surface_id()
                     .unwrap_or_else(|| SurfaceId::from_u64(1));
-                ReducerResult::changed()
-                    .with_effect(AppEffect::request_redraw(RedrawTarget::surface(surface_id)))
+                ReducerResult::changed().with_effect(AppEffect::request_redraw(
+                    RedrawTarget::surface(SurfaceRef::new(
+                        surface_id,
+                        SurfaceGeneration::initial(),
+                    )),
+                ))
             }
         }
     }
@@ -812,13 +814,12 @@ impl PrototypeApp {
 
         let surface_id = SurfaceId::from_u64(self.next_surface_id);
         self.next_surface_id += 1;
-        let window_id = window::Id::from_u64(self.next_window_id);
+        let window_id = WindowId::from_u64(self.next_window_id);
         self.next_window_id += 1;
-        self.runtime.add_surface(UiSurface::new(
-            surface_id,
-            window_id,
-            WindowRoot::new(RootId::new(name)),
-        ));
+        self.runtime.add_surface(
+            UiSurface::try_new(surface_id, window_id, SurfaceRoot::new(RootId::new(name)))
+                .expect("prototype surface construction should be valid"),
+        );
         self.surfaces.insert(name.to_owned(), surface_id);
         surface_id
     }

@@ -49,8 +49,9 @@ pub use effect::{
 };
 pub use event::{AppEvent, EventDescriptor, EventName};
 pub use ids::{
-    AppId, CalcId, CorrelationId, CustomScopeId, ExpressionId, ResourceId, RootId, ServiceId,
-    SurfaceId, ValueExprId,
+    AppId, CalcId, CorrelationId, CustomScopeId, ElementId, ExpressionId, ResourceGeneration,
+    ResourceId, ResourceOperationId, RootId, ServiceId, SurfaceGeneration, SurfaceId,
+    SurfaceInvalidationGeneration, ValueExprId, VersionError, WindowId,
 };
 pub use input::AppInput;
 pub use loop_::{AppHandler, AppLoop};
@@ -76,8 +77,10 @@ pub use snapshot::{
     AppSnapshot, SnapshotBinding, SnapshotBindingId, SnapshotSourceType, StateVersion,
 };
 pub use surface::{
-    SurfaceInvalidation, SurfaceLifecycle, SurfaceRetained, SurfaceRetainedRoot, UiSurface,
-    WindowRoot,
+    ElementPhase, ElementRegistration, SurfaceElementRef, SurfaceElements, SurfaceError,
+    SurfaceErrorCode, SurfaceInvalidation, SurfaceInvalidationKind, SurfaceLifecycle,
+    SurfaceMutation, SurfacePoint, SurfaceRef, SurfaceRoot, SurfaceRoute, SurfaceRouteStep,
+    SurfaceSize, UiSurface,
 };
 pub use task::{
     TaskIntentAttemptId, TaskIntentHandle, TaskIntentId, TaskIntentKey, TaskIntentName,
