@@ -4,7 +4,7 @@ Cycle ID: `C01`
 
 Owning repository: `/Users/codex/Development/surgeist-runtime`
 
-Status: `in_progress`
+Status: `draft`
 
 Cycle base: `34251095c626923ce7375555b74c67520f83078f`
 
@@ -74,12 +74,14 @@ and handoff rules come from `$surgeist-agent` and are not restated here.
 ### C01-T01 - Runtime-Owned Local Surface Model
 
 Files/area: `src/ids.rs`, `src/surface.rs`, C01-focused portions of
-`src/tests.rs`, and only the `src/lib.rs` reexports needed to exercise this task.
+`src/tests.rs`, and `src/lib.rs`; direct compile-caller type substitutions only
+in `src/effect.rs`, `src/runtime.rs`, and private `src/testing.rs` helpers.
 
 Intended behavior: implement every S2 runtime-owned identity, geometry,
 element/route, error, invalidation, and `UiSurface`-local contract assigned to
 C01. Include checked local root replacement/invalidation and exact validation
-precedence. Do not add registry-dependent `Runtime` methods or C03 lifecycle/
+precedence. Migrate only immediate callers to the new values; do not add effect
+disposition behavior, registry-dependent `Runtime` methods, or C03 lifecycle/
 render behavior.
 
 RED evidence: first add focused tests for ID/geometry round trips, element phase
@@ -104,9 +106,9 @@ Intended commit: `feat: add runtime-owned surface foundations`.
 
 Files/area: `Cargo.toml`, `src/lib.rs`, `src/loop_.rs`, `src/testing.rs`, and
 affected C01-focused portions of `src/tests.rs`; delete `src/bridge.rs`; in
-`src/coord.rs`, `src/effect.rs`, and `src/diagnostic.rs`, change only direct
-window-identity types required by dependency removal. Touch another `src/` file
-only when the compiler proves it is a direct concrete-type caller.
+`src/coord.rs` and `src/diagnostic.rs`, change only direct window-identity types
+required by dependency removal. Touch another `src/` file only when the compiler
+proves it is a direct concrete-type caller.
 
 Intended behavior: remove retained/window dependencies and bridge exports; use
 runtime `WindowId`, `SurfaceRef`, `SurfaceSize`, and `SurfacePoint` at direct
