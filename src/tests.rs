@@ -126,14 +126,14 @@ fn app_loop_delegates_runtime_drain_errors_without_wrapping() {
 }
 
 #[test]
-fn manifest_declares_root_msrv_1_89() {
+fn manifest_declares_root_msrv_1_97() {
     let manifest = include_str!("../Cargo.toml");
 
     assert!(
         manifest
             .lines()
-            .any(|line| line == "rust-version = \"1.89\""),
-        "runtime manifest must declare the root Rust 1.89 MSRV"
+            .any(|line| line == "rust-version = \"1.97\""),
+        "runtime manifest must declare the root Rust 1.97 MSRV"
     );
 }
 
