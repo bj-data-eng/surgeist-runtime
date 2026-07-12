@@ -90,12 +90,12 @@ fn app_loop_has_no_host_handler_or_native_loop() {
     let input = UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap();
     let mut expected_runtime = Runtime::new(CounterState::default(), CounterReducer);
     expected_runtime.enqueue_ui(input.clone()).unwrap();
-    let expected = expected_runtime.drain_once(RuntimeBudget::new());
+    let expected = expected_runtime.drain_once(RuntimeBudget::default());
 
     let mut app_loop = AppLoop::new(Runtime::new(CounterState::default(), CounterReducer));
     app_loop.runtime_mut().enqueue_ui(input).unwrap();
 
-    assert_eq!(app_loop.step(RuntimeBudget::new()), expected);
+    assert_eq!(app_loop.step(RuntimeBudget::default()), expected);
     assert_eq!(app_loop.into_runtime().state().value, 1);
 }
 
@@ -111,7 +111,7 @@ fn app_loop_delegates_runtime_drain_errors_without_wrapping() {
         .enqueue_ui(UiInput::new(CounterInput::Increment, trigger.clone()).unwrap())
         .unwrap();
 
-    let error = app_loop.step(RuntimeBudget::new()).unwrap_err();
+    let error = app_loop.step(RuntimeBudget::default()).unwrap_err();
 
     assert_eq!(error.code(), RuntimeDrainErrorCode::StateVersionOverflow);
     assert_eq!(error.lane(), RuntimeLane::Ui);
@@ -1181,7 +1181,7 @@ fn runtime_render_state_borrows_runtime_state_and_acknowledges_captured_work() {
     runtime
         .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
         .unwrap();
-    runtime.drain_once(RuntimeBudget::new()).unwrap();
+    runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     let render_state = runtime.begin_render(surface).unwrap();
     assert_eq!(render_state.state().value, 1);
@@ -2118,7 +2118,7 @@ fn runtime_forwards_task_work_as_intents_without_executing_it() {
         )
         .unwrap();
 
-    let report = runtime.drain_once(RuntimeBudget::new()).unwrap();
+    let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
     assert_eq!(report.forwarded_effects(), 1);
     assert_eq!(report.intents().len(), 1);
@@ -2130,7 +2130,7 @@ fn runtime_forwards_task_work_as_intents_without_executing_it() {
 }
 
 #[test]
-fn runtime_drains_ui_before_task_events_and_respects_budget() {
+fn runtime_drains_eligible_lanes_in_cyclic_order_and_respects_budget() {
     let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
     runtime
         .enqueue_task(
@@ -2152,7 +2152,7 @@ fn runtime_drains_ui_before_task_events_and_respects_budget() {
         .unwrap();
 
     let report = runtime
-        .drain_once(RuntimeBudget::new().max_inputs(1))
+        .drain_once(RuntimeBudget::default().with_max_inputs(1))
         .unwrap();
 
     assert_eq!(runtime.state().value, 1);
@@ -2160,11 +2160,188 @@ fn runtime_drains_ui_before_task_events_and_respects_budget() {
     assert_eq!(report.first_drained_lane(), Some(RuntimeLane::Ui));
     assert_eq!(
         runtime
-            .drain_once(RuntimeBudget::new())
+            .drain_once(RuntimeBudget::default())
             .unwrap()
             .drained_inputs(),
         1
     );
+}
+
+#[test]
+fn runtime_budget_construction_builders_accessors_and_zero_values_are_exact() {
+    assert_eq!(RuntimeBudget::default(), RuntimeBudget::new(64, 32, 32, 32));
+
+    let budget = RuntimeBudget::new(1, 2, 3, 4)
+        .with_max_inputs(5)
+        .with_max_ui_inputs(6)
+        .with_max_task_inputs(7)
+        .with_max_service_inputs(8);
+    assert_eq!(budget.max_inputs(), 5);
+    assert_eq!(budget.max_ui_inputs(), 6);
+    assert_eq!(budget.max_task_inputs(), 7);
+    assert_eq!(budget.max_service_inputs(), 8);
+
+    let zero = RuntimeBudget::new(0, 0, 0, 0);
+    assert_eq!(zero.max_inputs(), 0);
+    assert_eq!(zero.max_ui_inputs(), 0);
+    assert_eq!(zero.max_task_inputs(), 0);
+    assert_eq!(zero.max_service_inputs(), 0);
+
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
+    let report = runtime.drain_once(RuntimeBudget::new(0, 1, 1, 1)).unwrap();
+    assert_eq!(report.drained_inputs(), 0);
+    assert_eq!(report.remaining_ui_inputs(), 1);
+    assert!(report.has_pending_inputs());
+}
+
+#[test]
+fn runtime_reports_all_pending_lanes_and_stops_when_only_exhausted_lanes_remain() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
+    runtime
+        .enqueue_task(
+            TaskInput::new(
+                CounterInput::Increment,
+                InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    runtime
+        .enqueue_service(
+            ServiceInput::new(
+                CounterInput::Increment,
+                InputProvenance::service(ServiceId::new("runtime-test")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let report = runtime.drain_once(RuntimeBudget::new(3, 1, 0, 1)).unwrap();
+
+    assert_eq!(report.drained_inputs(), 2);
+    assert_eq!(report.remaining_ui_inputs(), 0);
+    assert_eq!(report.remaining_task_inputs(), 1);
+    assert_eq!(report.remaining_service_inputs(), 0);
+    assert!(report.has_pending_inputs());
+
+    let report = runtime.drain_once(RuntimeBudget::new(3, 0, 0, 0)).unwrap();
+    assert_eq!(report.drained_inputs(), 0);
+    assert_eq!(report.remaining_ui_inputs(), 0);
+    assert_eq!(report.remaining_task_inputs(), 1);
+    assert_eq!(report.remaining_service_inputs(), 0);
+    assert!(report.has_pending_inputs());
+
+    let report = runtime.drain_once(RuntimeBudget::new(3, 0, 1, 0)).unwrap();
+    assert_eq!(report.drained_inputs(), 1);
+    assert_eq!(report.remaining_ui_inputs(), 0);
+    assert_eq!(report.remaining_task_inputs(), 0);
+    assert_eq!(report.remaining_service_inputs(), 0);
+    assert!(!report.has_pending_inputs());
+}
+
+#[test]
+fn runtime_single_input_drains_rotate_across_mixed_backlogs_without_starving_service() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    for index in 0..6 {
+        runtime
+            .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+            .unwrap();
+        runtime
+            .enqueue_task(
+                TaskInput::new(
+                    CounterInput::Increment,
+                    InputProvenance::task(
+                        TaskIntentId::from_u64(index + 1),
+                        TaskIntentAttemptId::from_u64(1),
+                    ),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    for index in 0..2 {
+        runtime
+            .enqueue_service(
+                ServiceInput::new(
+                    CounterInput::Increment,
+                    InputProvenance::service(ServiceId::new(format!("service-{index}"))),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+
+    let lanes = (0..8)
+        .map(|_| {
+            runtime
+                .drain_once(RuntimeBudget::new(1, 1, 1, 1))
+                .unwrap()
+                .first_drained_lane()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        lanes,
+        vec![
+            Some(RuntimeLane::Ui),
+            Some(RuntimeLane::Task),
+            Some(RuntimeLane::Service),
+            Some(RuntimeLane::Ui),
+            Some(RuntimeLane::Task),
+            Some(RuntimeLane::Service),
+            Some(RuntimeLane::Ui),
+            Some(RuntimeLane::Task),
+        ]
+    );
+}
+
+#[test]
+fn runtime_overflow_requeues_target_lane_before_later_peer_and_reports_complete_pending_work() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    runtime.set_state_version_for_test(StateVersion::from_u64(u64::MAX));
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::RedrawAll, InputProvenance::system()).unwrap())
+        .unwrap();
+    let failed = InputProvenance::task(TaskIntentId::from_u64(1), TaskIntentAttemptId::from_u64(1));
+    runtime
+        .enqueue_task(TaskInput::new(CounterInput::Increment, failed.clone()).unwrap())
+        .unwrap();
+    runtime
+        .enqueue_task(
+            TaskInput::new(
+                CounterInput::RedrawAll,
+                InputProvenance::task(TaskIntentId::from_u64(2), TaskIntentAttemptId::from_u64(1)),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let error = runtime.drain_once(RuntimeBudget::default()).unwrap_err();
+
+    assert_eq!(error.lane(), RuntimeLane::Task);
+    assert_eq!(error.provenance(), &failed);
+    assert_eq!(error.partial_report().drained_inputs(), 1);
+    assert_eq!(
+        error.partial_report().first_drained_lane(),
+        Some(RuntimeLane::Ui)
+    );
+    assert_eq!(error.partial_report().remaining_ui_inputs(), 0);
+    assert_eq!(error.partial_report().remaining_task_inputs(), 2);
+    assert_eq!(error.partial_report().remaining_service_inputs(), 0);
+    assert!(error.partial_report().has_pending_inputs());
+
+    runtime.set_state_version_for_test(StateVersion::initial());
+    let report = runtime.drain_once(RuntimeBudget::new(1, 1, 1, 1)).unwrap();
+    assert_eq!(report.first_drained_lane(), Some(RuntimeLane::Task));
+    assert_eq!(runtime.state().value, 1);
+    assert_eq!(report.remaining_task_inputs(), 1);
+    assert!(report.has_pending_inputs());
 }
 
 #[test]
@@ -2187,8 +2364,16 @@ fn runtime_default_budget_caps_drained_inputs() {
 
     let report = runtime.drain_once(RuntimeBudget::default()).unwrap();
 
+    assert_eq!(runtime.state().value, 32);
+    assert_eq!(report.drained_inputs(), 32);
+    assert_eq!(
+        runtime
+            .drain_once(RuntimeBudget::default())
+            .unwrap()
+            .drained_inputs(),
+        32
+    );
     assert_eq!(runtime.state().value, 64);
-    assert_eq!(report.drained_inputs(), 64);
     assert_eq!(
         runtime
             .drain_once(RuntimeBudget::default())
@@ -2375,7 +2560,7 @@ fn full_queues_reject_newest_without_reordering_and_allow_exact_retry_after_spac
             .drained_inputs(),
         4
     );
-    assert_eq!(runtime.state().seen, vec![10, 20, 21, 30]);
+    assert_eq!(runtime.state().seen, vec![10, 20, 30, 21]);
 
     runtime.enqueue_task(rejected_task).unwrap();
     assert_eq!(
@@ -2385,7 +2570,7 @@ fn full_queues_reject_newest_without_reordering_and_allow_exact_retry_after_spac
             .drained_inputs(),
         1
     );
-    assert_eq!(runtime.state().seen, vec![10, 20, 21, 30, 22]);
+    assert_eq!(runtime.state().seen, vec![10, 20, 30, 21, 22]);
 }
 
 #[derive(Default)]
@@ -2700,6 +2885,14 @@ fn runtime_state_version_overflow_requeues_without_counting_the_input() {
     assert_eq!(error.surface(), None);
     assert_eq!(error.partial_report().drained_inputs(), 1);
     assert_eq!(error.partial_report().applied_effects(), 1);
+    assert_eq!(
+        error.partial_report().first_drained_lane(),
+        Some(RuntimeLane::Ui)
+    );
+    assert_eq!(error.partial_report().remaining_ui_inputs(), 1);
+    assert_eq!(error.partial_report().remaining_task_inputs(), 0);
+    assert_eq!(error.partial_report().remaining_service_inputs(), 0);
+    assert!(error.partial_report().has_pending_inputs());
     assert_eq!(runtime.state(), &CounterState::default());
     runtime.set_state_version_for_test(StateVersion::initial());
     assert_eq!(
@@ -2709,6 +2902,22 @@ fn runtime_state_version_overflow_requeues_without_counting_the_input() {
             .drained_inputs(),
         1
     );
+}
+
+#[test]
+fn runtime_immediate_overflow_reports_no_first_drained_lane() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    runtime.set_state_version_for_test(StateVersion::from_u64(u64::MAX));
+    runtime
+        .enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap())
+        .unwrap();
+
+    let error = runtime.drain_once(RuntimeBudget::default()).unwrap_err();
+
+    assert_eq!(error.partial_report().drained_inputs(), 0);
+    assert_eq!(error.partial_report().first_drained_lane(), None);
+    assert_eq!(error.partial_report().remaining_ui_inputs(), 1);
+    assert!(error.partial_report().has_pending_inputs());
 }
 
 struct EffectsReducer {
@@ -3521,7 +3730,7 @@ fn prototype_latest_search_wins_rejects_stale_completion() {
 
 #[test]
 fn prototype_log_stream_accumulates_ordered_entries_with_budgeted_draining() {
-    let mut app = PrototypeApp::log_stream(RuntimeBudget::new().max_task_events(10));
+    let mut app = PrototypeApp::log_stream(RuntimeBudget::default().with_max_task_inputs(10));
 
     for index in 0..35 {
         app.push_log_line(format!("line-{index:02}"));
@@ -3539,7 +3748,8 @@ fn prototype_log_stream_accumulates_ordered_entries_with_budgeted_draining() {
 
 #[test]
 fn stress_ten_thousand_task_events_use_coalesced_wakeups_and_budgeted_drains() {
-    let mut app = PrototypeApp::progress_counter(RuntimeBudget::new().max_task_events(128));
+    let mut app =
+        PrototypeApp::progress_counter(RuntimeBudget::default().with_max_task_inputs(128));
 
     for index in 0..10_000 {
         app.proxy().send_task(app.progress_event(index)).unwrap();

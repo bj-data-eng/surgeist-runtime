@@ -258,6 +258,7 @@ pub struct Runtime<State = (), R = (), Input = ()> {
     task_queue: VecDeque<TaskInput<Input>>,
     service_queue: VecDeque<ServiceInput<Input>>,
     queue_policy: RuntimeQueuePolicy,
+    next_drain_lane: RuntimeLane,
 }
 
 impl<State, R, Input> Runtime<State, R, Input> {
@@ -286,6 +287,7 @@ impl<State, R, Input> Runtime<State, R, Input> {
             task_queue: VecDeque::new(),
             service_queue: VecDeque::new(),
             queue_policy,
+            next_drain_lane: RuntimeLane::Ui,
         }
     }
 
@@ -722,6 +724,14 @@ fn ensure_targetable(lifecycle: SurfaceLifecycle) -> Result<(), SurfaceError> {
 }
 
 impl RuntimeLane {
+    const fn following(self) -> Self {
+        match self {
+            Self::Ui => Self::Task,
+            Self::Task => Self::Service,
+            Self::Service => Self::Ui,
+        }
+    }
+
     const fn queue_name(self) -> &'static str {
         match self {
             Self::Ui => "runtime.ui",
@@ -743,7 +753,7 @@ impl<State, R, Input> Runtime<State, R, Input>
 where
     R: Reducer<State, Input>,
 {
-    /// Drains queued inputs in the current lane order until `budget` is exhausted.
+    /// Drains queued inputs in persistent cyclic lane order until `budget` is exhausted.
     ///
     /// A checked changed-state transaction that cannot advance its state version
     /// or a required surface invalidation returns the partial work committed
@@ -754,52 +764,109 @@ where
     ) -> Result<RuntimeDrainReport, RuntimeDrainError> {
         let mut report = RuntimeDrainReport::default();
 
-        while report.drained_inputs < budget.max_inputs && !self.ui_queue.is_empty() {
-            let input = self
-                .ui_queue
-                .pop_front()
-                .expect("queue was checked before pop");
-            if let Err(overflow) = self.drain_input(RuntimeLane::Ui, &input.input, &mut report) {
-                self.ui_queue.push_front(input);
-                return Err(overflow.into_error(RuntimeLane::Ui, report));
+        let mut drained_ui_inputs = 0;
+        let mut drained_task_inputs = 0;
+        let mut drained_service_inputs = 0;
+        while report.drained_inputs < budget.max_inputs {
+            let Some(lane) = self.next_eligible_drain_lane(
+                budget,
+                drained_ui_inputs,
+                drained_task_inputs,
+                drained_service_inputs,
+            ) else {
+                break;
+            };
+
+            let overflow = match lane {
+                RuntimeLane::Ui => {
+                    let input = self
+                        .ui_queue
+                        .pop_front()
+                        .expect("queue was checked before pop");
+                    let result = self.drain_input(lane, &input.input, &mut report);
+                    if result.is_err() {
+                        self.ui_queue.push_front(input);
+                    }
+                    result.err()
+                }
+                RuntimeLane::Task => {
+                    let input = self
+                        .task_queue
+                        .pop_front()
+                        .expect("queue was checked before pop");
+                    let result = self.drain_input(lane, &input.input, &mut report);
+                    if result.is_err() {
+                        self.task_queue.push_front(input);
+                    }
+                    result.err()
+                }
+                RuntimeLane::Service => {
+                    let input = self
+                        .service_queue
+                        .pop_front()
+                        .expect("queue was checked before pop");
+                    let result = self.drain_input(lane, &input.input, &mut report);
+                    if result.is_err() {
+                        self.service_queue.push_front(input);
+                    }
+                    result.err()
+                }
+            };
+
+            if let Some(overflow) = overflow {
+                self.next_drain_lane = lane;
+                report.record_pending_inputs(
+                    self.ui_queue.len(),
+                    self.task_queue.len(),
+                    self.service_queue.len(),
+                );
+                return Err(overflow.into_error(lane, report));
             }
+
+            match lane {
+                RuntimeLane::Ui => drained_ui_inputs += 1,
+                RuntimeLane::Task => drained_task_inputs += 1,
+                RuntimeLane::Service => drained_service_inputs += 1,
+            }
+            self.next_drain_lane = lane.following();
         }
 
-        let mut drained_task_events = 0;
-        while report.drained_inputs < budget.max_inputs
-            && drained_task_events < budget.max_task_events
-            && !self.task_queue.is_empty()
-        {
-            let input = self
-                .task_queue
-                .pop_front()
-                .expect("queue was checked before pop");
-            if let Err(overflow) = self.drain_input(RuntimeLane::Task, &input.input, &mut report) {
-                self.task_queue.push_front(input);
-                return Err(overflow.into_error(RuntimeLane::Task, report));
-            }
-            drained_task_events += 1;
-        }
-
-        let mut drained_service_events = 0;
-        while report.drained_inputs < budget.max_inputs
-            && drained_service_events < budget.max_service_events
-            && !self.service_queue.is_empty()
-        {
-            let input = self
-                .service_queue
-                .pop_front()
-                .expect("queue was checked before pop");
-            if let Err(overflow) = self.drain_input(RuntimeLane::Service, &input.input, &mut report)
-            {
-                self.service_queue.push_front(input);
-                return Err(overflow.into_error(RuntimeLane::Service, report));
-            }
-            drained_service_events += 1;
-        }
-
+        report.record_pending_inputs(
+            self.ui_queue.len(),
+            self.task_queue.len(),
+            self.service_queue.len(),
+        );
         report.finish();
         Ok(report)
+    }
+
+    fn next_eligible_drain_lane(
+        &self,
+        budget: RuntimeBudget,
+        drained_ui_inputs: usize,
+        drained_task_inputs: usize,
+        drained_service_inputs: usize,
+    ) -> Option<RuntimeLane> {
+        let mut lane = self.next_drain_lane;
+        for _ in 0..3 {
+            let eligible = match lane {
+                RuntimeLane::Ui => {
+                    !self.ui_queue.is_empty() && drained_ui_inputs < budget.max_ui_inputs
+                }
+                RuntimeLane::Task => {
+                    !self.task_queue.is_empty() && drained_task_inputs < budget.max_task_inputs
+                }
+                RuntimeLane::Service => {
+                    !self.service_queue.is_empty()
+                        && drained_service_inputs < budget.max_service_inputs
+                }
+            };
+            if eligible {
+                return Some(lane);
+            }
+            lane = lane.following();
+        }
+        None
     }
 
     fn drain_input(
@@ -1071,42 +1138,84 @@ where
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RuntimeBudget {
     max_inputs: usize,
-    max_task_events: usize,
-    max_service_events: usize,
+    max_ui_inputs: usize,
+    max_task_inputs: usize,
+    max_service_inputs: usize,
 }
 
 impl RuntimeBudget {
+    /// Constructs a budget with exact global and per-lane input limits.
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(
+        max_inputs: usize,
+        max_ui_inputs: usize,
+        max_task_inputs: usize,
+        max_service_inputs: usize,
+    ) -> Self {
         Self {
-            max_inputs: 64,
-            max_task_events: 64,
-            max_service_events: 32,
+            max_inputs,
+            max_ui_inputs,
+            max_task_inputs,
+            max_service_inputs,
         }
     }
 
+    /// Returns a copy with the global input limit replaced.
     #[must_use]
-    pub const fn max_inputs(mut self, max_inputs: usize) -> Self {
-        self.max_inputs = max_inputs;
+    pub const fn with_max_inputs(mut self, value: usize) -> Self {
+        self.max_inputs = value;
         self
     }
 
+    /// Returns a copy with the UI-lane input limit replaced.
     #[must_use]
-    pub const fn max_task_events(mut self, max_task_events: usize) -> Self {
-        self.max_task_events = max_task_events;
+    pub const fn with_max_ui_inputs(mut self, value: usize) -> Self {
+        self.max_ui_inputs = value;
         self
     }
 
+    /// Returns a copy with the task-lane input limit replaced.
     #[must_use]
-    pub const fn max_service_events(mut self, max_service_events: usize) -> Self {
-        self.max_service_events = max_service_events;
+    pub const fn with_max_task_inputs(mut self, value: usize) -> Self {
+        self.max_task_inputs = value;
         self
+    }
+
+    /// Returns a copy with the service-lane input limit replaced.
+    #[must_use]
+    pub const fn with_max_service_inputs(mut self, value: usize) -> Self {
+        self.max_service_inputs = value;
+        self
+    }
+
+    /// Returns the global input limit.
+    #[must_use]
+    pub const fn max_inputs(&self) -> usize {
+        self.max_inputs
+    }
+
+    /// Returns the UI-lane input limit.
+    #[must_use]
+    pub const fn max_ui_inputs(&self) -> usize {
+        self.max_ui_inputs
+    }
+
+    /// Returns the task-lane input limit.
+    #[must_use]
+    pub const fn max_task_inputs(&self) -> usize {
+        self.max_task_inputs
+    }
+
+    /// Returns the service-lane input limit.
+    #[must_use]
+    pub const fn max_service_inputs(&self) -> usize {
+        self.max_service_inputs
     }
 }
 
 impl Default for RuntimeBudget {
     fn default() -> Self {
-        Self::new()
+        Self::new(64, 32, 32, 32)
     }
 }
 
@@ -1118,6 +1227,10 @@ pub struct RuntimeDrainReport {
     forwarded_effects: usize,
     rejected_effects: usize,
     reducer_errors: usize,
+    remaining_ui_inputs: usize,
+    remaining_task_inputs: usize,
+    remaining_service_inputs: usize,
+    has_pending_inputs: bool,
     first_drained_lane: Option<RuntimeLane>,
     redraw_requests: Vec<SurfaceRef>,
     intents: Vec<RuntimeIntent>,
@@ -1176,7 +1289,31 @@ impl RuntimeDrainReport {
         self.reducer_errors
     }
 
-    /// Returns the first lane from which an input committed during this drain.
+    /// Returns the number of UI inputs left queued after final disposition.
+    #[must_use]
+    pub const fn remaining_ui_inputs(&self) -> usize {
+        self.remaining_ui_inputs
+    }
+
+    /// Returns the number of task inputs left queued after final disposition.
+    #[must_use]
+    pub const fn remaining_task_inputs(&self) -> usize {
+        self.remaining_task_inputs
+    }
+
+    /// Returns the number of service inputs left queued after final disposition.
+    #[must_use]
+    pub const fn remaining_service_inputs(&self) -> usize {
+        self.remaining_service_inputs
+    }
+
+    /// Returns whether any runtime input remains queued after final disposition.
+    #[must_use]
+    pub const fn has_pending_inputs(&self) -> bool {
+        self.has_pending_inputs
+    }
+
+    /// Returns the first lane from which an input completed during this drain.
     #[must_use]
     pub const fn first_drained_lane(&self) -> Option<RuntimeLane> {
         self.first_drained_lane
@@ -1218,6 +1355,19 @@ impl RuntimeDrainReport {
     fn record_rejected(&mut self, outcome: EffectOutcome) {
         self.rejected_effects += 1;
         self.effect_outcomes.push(outcome);
+    }
+
+    fn record_pending_inputs(
+        &mut self,
+        remaining_ui_inputs: usize,
+        remaining_task_inputs: usize,
+        remaining_service_inputs: usize,
+    ) {
+        self.remaining_ui_inputs = remaining_ui_inputs;
+        self.remaining_task_inputs = remaining_task_inputs;
+        self.remaining_service_inputs = remaining_service_inputs;
+        self.has_pending_inputs =
+            remaining_ui_inputs != 0 || remaining_task_inputs != 0 || remaining_service_inputs != 0;
     }
 
     fn finish(&mut self) {

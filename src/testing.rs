@@ -134,7 +134,7 @@ pub enum ServiceRequestStatus {
 pub struct PrototypeApp {
     budget: RuntimeBudget,
     runtime: Runtime<PrototypeState, PrototypeReducer, PrototypeInput>,
-    last_drain_inputs: usize,
+    last_drain_has_pending_inputs: bool,
     wake: FakeWakeBridge,
     proxy: AppProxy<PrototypeInput>,
     next_request_id: u64,
@@ -249,13 +249,13 @@ impl PrototypeApp {
             .runtime
             .drain_once(self.budget)
             .expect("prototype fixtures do not construct overflowing runtime transactions");
-        self.last_drain_inputs = report.drained_inputs();
+        self.last_drain_has_pending_inputs = report.has_pending_inputs();
     }
 
     pub fn drain_all(&mut self) {
         loop {
             self.drain();
-            if self.proxy.pending_len() == 0 && self.last_drain_inputs == 0 {
+            if self.proxy.pending_len() == 0 && !self.last_drain_has_pending_inputs {
                 break;
             }
         }
@@ -382,7 +382,7 @@ impl PrototypeApp {
         Self {
             budget,
             runtime: Runtime::new(PrototypeState::default(), PrototypeReducer),
-            last_drain_inputs: 0,
+            last_drain_has_pending_inputs: false,
             wake,
             proxy,
             next_request_id: 1,
