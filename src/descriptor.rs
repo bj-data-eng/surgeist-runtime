@@ -35,6 +35,35 @@ impl App {
     }
 
     /// Creates a snapshot bound to one root declared by this application's manifest.
+    ///
+    /// ```
+    /// use surgeist_runtime::{
+    ///     App, AppDescriptor, AppId, AppManifest, RootDescriptor, RootId, SnapshotBinding,
+    ///     SnapshotBindingId, SnapshotEntry, SnapshotSourceType, SnapshotValue, StateVersion,
+    /// };
+    ///
+    /// let manifest = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0"))
+    ///     .root(
+    ///         RootDescriptor::new(RootId::new("main")).binds_snapshot(SnapshotBinding::new(
+    ///             SnapshotBindingId::try_new("counter")?,
+    ///             SnapshotSourceType::try_new("CounterState")?,
+    ///         )),
+    ///     );
+    /// let app = App::try_new(manifest.clone())?;
+    /// let validated = manifest.validate()?;
+    ///
+    /// let mut snapshot = validated.new_snapshot(RootId::new("main"), StateVersion::initial())?;
+    /// snapshot.add_entry(SnapshotEntry::new(
+    ///     SnapshotBinding::new(
+    ///         SnapshotBindingId::try_new("counter")?,
+    ///         SnapshotSourceType::try_new("CounterState")?,
+    ///     ),
+    ///     SnapshotValue::try_new("{\"value\": 1}")?,
+    /// ))?;
+    /// assert_eq!(app.manifest().roots().count(), 1);
+    /// assert_eq!(snapshot.entries().len(), 1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn new_snapshot(
         &self,
         root_id: RootId,

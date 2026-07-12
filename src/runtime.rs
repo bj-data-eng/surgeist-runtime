@@ -225,6 +225,24 @@ pub enum RuntimeQueueErrorCode {
 }
 
 /// A rejected runtime input that remains available for an exact later retry.
+///
+/// ```
+/// use surgeist_runtime::{InputProvenance, Runtime, RuntimeQueuePolicy, UiInput};
+///
+/// let mut runtime = Runtime::<(), (), &str>::new_with_queue_policy(
+///     (),
+///     (),
+///     RuntimeQueuePolicy::new(0, 1, 1),
+/// );
+/// let input = UiInput::new("retry-me", InputProvenance::system())?;
+/// let rejected = runtime.enqueue_ui(input).unwrap_err();
+///
+/// assert_eq!(
+///     rejected.into_rejected().into_app_input().into_payload(),
+///     "retry-me"
+/// );
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RuntimeQueueError<T> {
     code: RuntimeQueueErrorCode,
@@ -278,6 +296,34 @@ impl<T> fmt::Display for RuntimeQueueError<T> {
 impl<T: fmt::Debug> Error for RuntimeQueueError<T> {}
 
 /// Deterministic owner of application state, registered surfaces, queues, and diagnostics.
+///
+/// ```
+/// use surgeist_runtime::{
+///     ElementId, ElementPhase, ElementRegistration, RootId, Runtime, SurfacePoint, SurfaceRoot,
+///     SurfaceSize, UiSurface, WindowId, SurfaceId,
+/// };
+///
+/// let window_id = WindowId::from_u64(1);
+/// let surface_id = SurfaceId::from_u64(2);
+/// let element_id = ElementId::from_u64(3);
+/// let mut root = SurfaceRoot::new(RootId::new("main"));
+/// root.register_element(ElementRegistration::try_new(element_id, [ElementPhase::Target])?)?;
+///
+/// let mut runtime = Runtime::<u8>::new(7, ());
+/// let surface = runtime.register_surface(UiSurface::try_new(surface_id, window_id, root)?)?;
+/// runtime.update_surface(surface, |surface| surface.ready().map(|_| ()))?;
+/// runtime.resize(surface, SurfaceSize::new(800, 600))?;
+/// runtime.set_scroll_offset(surface, SurfacePoint::new(12, -4))?;
+///
+/// let render_state = runtime.begin_render(surface)?;
+/// assert_eq!(*render_state.state(), 7);
+/// assert_eq!(render_state.frame().surface(), surface);
+/// let acknowledgement = runtime.mark_rendered(render_state.into_frame())?;
+/// assert_eq!(acknowledgement.surface(), surface);
+/// assert_eq!(acknowledgement.consumed_invalidations(), 2);
+/// assert_eq!(acknowledgement.remaining_invalidations(), 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub struct Runtime<State = (), R = (), Input = ()> {
     state: State,
     reducer: R,
@@ -401,6 +447,34 @@ impl<State, R, Input> Runtime<State, R, Input> {
     /// Failed updates leave both the surface registry and observer subscriptions
     /// unchanged. A generation change or first terminal transition removes the
     /// subscriptions for the prior current registration before the new state commits.
+    ///
+    /// ```
+    /// use surgeist_runtime::{
+    ///     RootId, Runtime, SurfaceErrorCode, SurfaceId, SurfaceRoot, UiSurface, WindowId,
+    /// };
+    ///
+    /// let mut runtime = Runtime::<()>::new((), ());
+    /// let first = runtime.register_surface(UiSurface::try_new(
+    ///     SurfaceId::from_u64(1),
+    ///     WindowId::from_u64(1),
+    ///     SurfaceRoot::new(RootId::new("first")),
+    /// )?)?;
+    /// runtime.remove_surface(first)?;
+    /// let replacement = runtime.register_surface(UiSurface::try_new(
+    ///     SurfaceId::from_u64(1),
+    ///     WindowId::from_u64(1),
+    ///     SurfaceRoot::new(RootId::new("replacement")),
+    /// )?)?;
+    ///
+    /// let error = runtime.update_surface(first, |_| Ok(())).unwrap_err();
+    /// assert_eq!(error.code(), SurfaceErrorCode::StaleSurfaceGeneration);
+    /// assert_ne!(first, replacement);
+    /// assert_eq!(
+    ///     runtime.surface(replacement.surface_id()).unwrap().root().id().as_str(),
+    ///     "replacement"
+    /// );
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn update_surface(
         &mut self,
         surface: SurfaceRef,

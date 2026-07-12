@@ -18,6 +18,40 @@ pub trait Reducer<State, Input> {
 ///
 /// Effects retain their batch order. A commit with no provenance leaves
 /// provenance selection to its consumer.
+///
+/// ```
+/// use surgeist_runtime::{
+///     AppEffect, AppScope, InputProvenance, ReducerCommit, ReducerResult,
+/// };
+///
+/// let provenance = InputProvenance::system().with_sequence(9);
+/// let unchanged = ReducerResult::<u8>::unchanged(
+///     ReducerCommit::new()
+///         .with_effect(AppEffect::persist("settings", AppScope::app()))
+///         .with_provenance(provenance.clone()),
+/// );
+/// let changed = ReducerResult::changed(
+///     2_u8,
+///     ReducerCommit::new()
+///         .with_effect(AppEffect::persist("settings", AppScope::app()))
+///         .with_provenance(provenance.clone()),
+/// );
+///
+/// match unchanged {
+///     ReducerResult::Unchanged(commit) => {
+///         assert_eq!(commit.effects().effects().len(), 1);
+///         assert_eq!(commit.provenance(), Some(&provenance));
+///     }
+///     _ => panic!("expected an unchanged commit"),
+/// }
+/// match changed {
+///     ReducerResult::Changed(change) => {
+///         assert_eq!(change.state(), &2);
+///         assert_eq!(change.commit().provenance(), Some(&provenance));
+///     }
+///     _ => panic!("expected a changed commit"),
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct ReducerCommit {
     effects: EffectBatch,

@@ -41,6 +41,65 @@ impl CheckedNext for StateVersion {
 }
 
 /// The kind of rejected snapshot input or transition.
+///
+/// ```
+/// use surgeist_runtime::{
+///     AppDescriptor, AppId, AppManifest, RootDescriptor, RootId, SnapshotBinding,
+///     SnapshotBindingId, SnapshotEntry, SnapshotErrorCode, SnapshotSourceType, SnapshotValue,
+///     StateVersion,
+/// };
+///
+/// let manifest = AppManifest::new(AppDescriptor::new(AppId::new("photo.lab"), "1.0")).root(
+///     RootDescriptor::new(RootId::new("main"))
+///         .binds_snapshot(SnapshotBinding::new(
+///             SnapshotBindingId::try_new("counter")?,
+///             SnapshotSourceType::try_new("CounterState")?,
+///         ))
+///         .binds_snapshot(SnapshotBinding::new(
+///             SnapshotBindingId::try_new("settings")?,
+///             SnapshotSourceType::try_new("SettingsState")?,
+///         )),
+/// );
+/// let mut snapshot = manifest
+///     .validate()?
+///     .new_snapshot(RootId::new("main"), StateVersion::initial())?;
+/// let before = snapshot.entries().to_vec();
+///
+/// let undeclared = snapshot
+///     .add_entry(SnapshotEntry::new(
+///         SnapshotBinding::new(
+///             SnapshotBindingId::try_new("other")?,
+///             SnapshotSourceType::try_new("OtherState")?,
+///         ),
+///         SnapshotValue::try_new("two")?,
+///     ))
+///     .unwrap_err();
+/// match undeclared.code() {
+///     SnapshotErrorCode::UndeclaredBinding => {}
+///     _ => panic!("unexpected snapshot error"),
+/// }
+/// assert_eq!(undeclared.root_id().unwrap().as_str(), "main");
+/// assert_eq!(undeclared.binding_id().unwrap().as_str(), "other");
+/// assert_eq!(snapshot.entries(), before);
+///
+/// let mismatch = snapshot
+///     .add_entry(SnapshotEntry::new(
+///         SnapshotBinding::new(
+///             SnapshotBindingId::try_new("settings")?,
+///             SnapshotSourceType::try_new("OtherState")?,
+///         ),
+///         SnapshotValue::try_new("three")?,
+///     ))
+///     .unwrap_err();
+/// match mismatch.code() {
+///     SnapshotErrorCode::SourceTypeMismatch => {}
+///     _ => panic!("unexpected snapshot error"),
+/// }
+/// assert_eq!(mismatch.expected_source_type().unwrap().as_str(), "SettingsState");
+/// assert_eq!(mismatch.actual_source_type().unwrap().as_str(), "OtherState");
+/// assert_eq!(snapshot.entries(), before);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SnapshotErrorCode {
