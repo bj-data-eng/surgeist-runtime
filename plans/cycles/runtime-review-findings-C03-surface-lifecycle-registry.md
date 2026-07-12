@@ -4,7 +4,7 @@ Cycle ID: `C03`
 
 Owning repository: `/Users/codex/Development/surgeist-runtime`
 
-Status: `in_progress`
+Status: `draft`
 
 Cycle base: `cca1b9281a883417cbe30a648f80d80ca7da0bf4`
 
@@ -103,13 +103,15 @@ Intended commit: `feat: define surface lifecycle and render state`.
 ### C03-T02 - Authoritative Runtime Surface Registry
 
 Files/area: registry/coordination portions of `src/runtime.rs`, only necessary
-crate-private coordination integration in `src/coord.rs`, C03 runtime reexports
-in `src/lib.rs`, and registry-focused portions of `src/tests.rs`.
+crate-private coordination integration in `src/coord.rs`, crate-private cloning
+or registration-generation staging support in `src/surface.rs`, C03 runtime
+reexports in `src/lib.rs`, and registry-focused portions of `src/tests.rs`.
 
 Intended behavior: implement S3A registry, tombstones, current `SurfaceRef`
 issuance, staged update/remove/re-registration, read-only queries, Runtime-owned
 CoordinationState, validated subscribe/unsubscribe, and atomic subscription
-cleanup on generation change, first terminal transition, and removal. Exclude the
+cleanup on generation change, first terminal transition, and removal. Surface
+staging support remains crate-private and adds no mutation bypass. Exclude the
 final effect/redraw lookup paragraph.
 
 RED evidence: first add tests for duplicate/unknown/stale operations,
