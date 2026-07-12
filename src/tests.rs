@@ -782,6 +782,458 @@ fn test_surface(surface_id: u64, window_id: u64, root_id: &str) -> UiSurface {
     .expect("test surface construction should be valid")
 }
 
+fn test_surface_with_elements(
+    surface_id: u64,
+    window_id: u64,
+    root_id: &str,
+    elements: impl IntoIterator<Item = (u64, Vec<ElementPhase>)>,
+) -> UiSurface {
+    let mut root = SurfaceRoot::new(RootId::new(root_id));
+    for (element_id, phases) in elements {
+        root.register_element(
+            ElementRegistration::try_new(ElementId::from_u64(element_id), phases)
+                .expect("test element registration should be valid"),
+        )
+        .expect("test root should accept unique elements");
+    }
+
+    UiSurface::try_new(
+        SurfaceId::from_u64(surface_id),
+        WindowId::from_u64(window_id),
+        root,
+    )
+    .expect("test surface construction should be valid")
+}
+
+fn ready_surface(
+    runtime: &mut Runtime<CounterState, CounterReducer, CounterInput>,
+    surface: SurfaceRef,
+) {
+    runtime
+        .update_surface(surface, |surface| surface.ready().map(|_| ()))
+        .expect("registered created surface should become ready");
+}
+
+#[test]
+fn runtime_validation_applies_registry_lifecycle_and_element_precedence() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let created = runtime
+        .register_surface(test_surface_with_elements(
+            1,
+            1,
+            "created",
+            [(1, vec![ElementPhase::Target])],
+        ))
+        .unwrap();
+    let unknown = SurfaceElementRef::new(
+        SurfaceRef::new(SurfaceId::from_u64(9), SurfaceGeneration::initial()),
+        ElementId::from_u64(99),
+    );
+    assert_eq!(
+        runtime
+            .validate_element(unknown, ElementPhase::Bubble)
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::UnknownSurface
+    );
+
+    let stale = created;
+    runtime
+        .update_surface(created, |surface| {
+            surface.replace_root(SurfaceRoot::new(RootId::new("replacement")))?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        runtime
+            .validate_element(
+                SurfaceElementRef::new(stale, ElementId::from_u64(99)),
+                ElementPhase::Bubble,
+            )
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::StaleSurfaceGeneration
+    );
+
+    let inactive = runtime
+        .register_surface(test_surface_with_elements(
+            2,
+            1,
+            "inactive",
+            [(1, vec![ElementPhase::Target])],
+        ))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .validate_element(
+                SurfaceElementRef::new(inactive, ElementId::from_u64(99)),
+                ElementPhase::Bubble,
+            )
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::InvalidLifecycleTransition
+    );
+
+    ready_surface(&mut runtime, inactive);
+    assert_eq!(
+        runtime
+            .validate_element(
+                SurfaceElementRef::new(inactive, ElementId::from_u64(99)),
+                ElementPhase::Bubble,
+            )
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::UnknownElement
+    );
+    assert_eq!(
+        runtime
+            .validate_element(
+                SurfaceElementRef::new(inactive, ElementId::from_u64(1)),
+                ElementPhase::Bubble,
+            )
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::IneligibleElementTarget
+    );
+}
+
+#[test]
+fn runtime_route_validation_checks_every_step_and_target_surface_identity() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface_with_elements(
+            1,
+            1,
+            "main",
+            [
+                (1, vec![ElementPhase::Capture]),
+                (2, vec![ElementPhase::Target]),
+                (3, vec![ElementPhase::Bubble]),
+            ],
+        ))
+        .unwrap();
+    ready_surface(&mut runtime, surface);
+
+    let route = SurfaceRoute::try_new(
+        surface,
+        [
+            SurfaceRouteStep::new(ElementId::from_u64(1), ElementPhase::Capture),
+            SurfaceRouteStep::new(ElementId::from_u64(2), ElementPhase::Target),
+            SurfaceRouteStep::new(ElementId::from_u64(3), ElementPhase::Bubble),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        runtime.validate_route(&route),
+        Ok(SurfaceElementRef::new(surface, ElementId::from_u64(2)))
+    );
+
+    let invalid_step = SurfaceRoute::try_new(
+        surface,
+        [
+            SurfaceRouteStep::new(ElementId::from_u64(2), ElementPhase::Capture),
+            SurfaceRouteStep::new(ElementId::from_u64(2), ElementPhase::Target),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        runtime.validate_route(&invalid_step).unwrap_err().code(),
+        SurfaceErrorCode::IneligibleElementTarget
+    );
+
+    let other = runtime
+        .register_surface(test_surface_with_elements(
+            2,
+            1,
+            "other",
+            [(2, vec![ElementPhase::Target])],
+        ))
+        .unwrap();
+    ready_surface(&mut runtime, other);
+    assert_eq!(
+        runtime
+            .set_focus(
+                surface,
+                Some(SurfaceElementRef::new(other, ElementId::from_u64(2)))
+            )
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::SurfaceMismatch
+    );
+}
+
+#[test]
+fn runtime_focus_and_hover_set_clear_and_duplicate_are_deterministic() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface_with_elements(
+            1,
+            1,
+            "main",
+            [(7, vec![ElementPhase::Target])],
+        ))
+        .unwrap();
+    ready_surface(&mut runtime, surface);
+    let element = SurfaceElementRef::new(surface, ElementId::from_u64(7));
+
+    let focus = runtime.set_focus(surface, Some(element)).unwrap();
+    assert!(focus.changed());
+    assert!(focus.redraw_required());
+    assert_eq!(
+        runtime
+            .surface(surface.surface_id())
+            .unwrap()
+            .focused_element(),
+        Some(element)
+    );
+    assert!(!runtime.set_focus(surface, Some(element)).unwrap().changed());
+
+    let hover = runtime.set_hover(surface, Some(element)).unwrap();
+    assert!(hover.changed());
+    assert_eq!(
+        runtime
+            .surface(surface.surface_id())
+            .unwrap()
+            .hovered_element(),
+        Some(element)
+    );
+    assert!(!runtime.set_hover(surface, Some(element)).unwrap().changed());
+
+    assert!(runtime.set_focus(surface, None).unwrap().changed());
+    assert!(runtime.set_hover(surface, None).unwrap().changed());
+    assert_eq!(
+        runtime
+            .surface(surface.surface_id())
+            .unwrap()
+            .focused_element(),
+        None
+    );
+    assert_eq!(
+        runtime
+            .surface(surface.surface_id())
+            .unwrap()
+            .hovered_element(),
+        None
+    );
+}
+
+#[test]
+fn runtime_surface_mutations_reject_stale_and_terminal_targets_atomically() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface_with_elements(
+            1,
+            1,
+            "main",
+            [(7, vec![ElementPhase::Target])],
+        ))
+        .unwrap();
+    ready_surface(&mut runtime, surface);
+    let stale = surface;
+    runtime
+        .update_surface(surface, |surface| {
+            surface.replace_root(SurfaceRoot::new(RootId::new("replacement")))?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        runtime
+            .set_scroll_offset(stale, SurfacePoint::new(3, 4))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::StaleSurfaceGeneration
+    );
+
+    let current = runtime.surface_ref(surface.surface_id()).unwrap();
+    runtime
+        .update_surface(current, |surface| surface.closing().map(|_| ()))
+        .unwrap();
+    let before = runtime
+        .surface(current.surface_id())
+        .unwrap()
+        .invalidations()
+        .to_vec();
+    assert_eq!(
+        runtime
+            .set_scroll_offset(current, SurfacePoint::new(3, 4))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::TerminalSurface
+    );
+    assert_eq!(
+        runtime
+            .surface(current.surface_id())
+            .unwrap()
+            .invalidations(),
+        before
+    );
+}
+
+#[test]
+fn runtime_scroll_and_resize_record_invalidation_and_precise_redraw_outcomes() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let created = runtime
+        .register_surface(test_surface(1, 1, "created"))
+        .unwrap();
+    let scroll = runtime
+        .set_scroll_offset(created, SurfacePoint::new(3, 4))
+        .unwrap();
+    assert!(scroll.changed());
+    assert_eq!(
+        scroll.invalidation_generation(),
+        Some(SurfaceInvalidationGeneration::initial())
+    );
+    assert!(!scroll.redraw_required());
+    assert_eq!(
+        runtime
+            .resize(created, SurfaceSize::new(800, 600))
+            .unwrap_err()
+            .code(),
+        SurfaceErrorCode::InvalidLifecycleTransition
+    );
+
+    ready_surface(&mut runtime, created);
+    let resize = runtime.resize(created, SurfaceSize::new(800, 600)).unwrap();
+    assert!(resize.changed());
+    assert!(resize.redraw_required());
+    assert_eq!(
+        runtime.surface(created.surface_id()).unwrap().lifecycle(),
+        SurfaceLifecycle::Resized
+    );
+    assert!(matches!(
+        runtime
+            .surface(created.surface_id())
+            .unwrap()
+            .invalidations()
+            .last()
+            .map(SurfaceInvalidation::kind),
+        Some(SurfaceInvalidationKind::ViewportChanged)
+    ));
+    assert!(
+        !runtime
+            .resize(created, SurfaceSize::new(800, 600))
+            .unwrap()
+            .changed()
+    );
+}
+
+#[test]
+fn runtime_render_state_borrows_runtime_state_and_acknowledges_captured_work() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface(1, 1, "main"))
+        .unwrap();
+    ready_surface(&mut runtime, surface);
+    runtime
+        .set_scroll_offset(surface, SurfacePoint::new(3, 4))
+        .unwrap();
+    runtime.enqueue_ui(UiInput::new(CounterInput::Increment, InputProvenance::system()).unwrap());
+    runtime.drain_once(RuntimeBudget::new());
+
+    let render_state = runtime.begin_render(surface).unwrap();
+    assert_eq!(render_state.state().value, 1);
+    assert_eq!(render_state.frame().surface(), surface);
+    assert_eq!(
+        render_state.frame().state_version(),
+        runtime.state_version()
+    );
+    let frame = render_state.into_frame();
+    let ack = runtime.mark_rendered(frame).unwrap();
+    assert_eq!(ack.consumed_invalidations(), 1);
+    assert_eq!(ack.remaining_invalidations(), 0);
+    assert!(!ack.redraw_required());
+}
+
+#[test]
+fn runtime_render_ack_is_lifecycle_atomic_and_coalesces_replays() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let surface = runtime
+        .register_surface(test_surface(1, 1, "main"))
+        .unwrap();
+    ready_surface(&mut runtime, surface);
+    runtime
+        .set_scroll_offset(surface, SurfacePoint::new(1, 2))
+        .unwrap();
+    let frame = runtime.begin_render(surface).unwrap().into_frame();
+    runtime
+        .set_scroll_offset(surface, SurfacePoint::new(3, 4))
+        .unwrap();
+
+    let first = runtime.mark_rendered(frame).unwrap();
+    assert_eq!(first.consumed_invalidations(), 1);
+    assert_eq!(first.remaining_invalidations(), 1);
+    assert!(first.redraw_required());
+    let replay = runtime.mark_rendered(frame).unwrap();
+    assert_eq!(replay.consumed_invalidations(), 0);
+    assert_eq!(replay.remaining_invalidations(), 1);
+
+    runtime
+        .update_surface(surface, |surface| surface.hidden().map(|_| ()))
+        .unwrap();
+    let before = runtime
+        .surface(surface.surface_id())
+        .unwrap()
+        .invalidations()
+        .to_vec();
+    assert_eq!(
+        runtime.mark_rendered(frame).unwrap_err().code(),
+        SurfaceErrorCode::InvalidLifecycleTransition
+    );
+    assert_eq!(
+        runtime
+            .surface(surface.surface_id())
+            .unwrap()
+            .invalidations(),
+        before
+    );
+}
+
+#[test]
+fn runtime_renderable_invalidated_surfaces_are_ordered_and_lifecycle_filtered() {
+    let mut runtime = Runtime::new(CounterState::default(), CounterReducer);
+    let third = runtime
+        .register_surface(test_surface(3, 1, "third"))
+        .unwrap();
+    let first = runtime
+        .register_surface(test_surface(1, 1, "first"))
+        .unwrap();
+    let second = runtime
+        .register_surface(test_surface(2, 1, "second"))
+        .unwrap();
+    ready_surface(&mut runtime, first);
+    ready_surface(&mut runtime, second);
+    runtime
+        .update_surface(third, |surface| {
+            surface.ready()?;
+            surface.hidden()?;
+            Ok(())
+        })
+        .unwrap();
+
+    runtime
+        .set_scroll_offset(first, SurfacePoint::new(1, 1))
+        .unwrap();
+    runtime
+        .set_scroll_offset(third, SurfacePoint::new(3, 3))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .renderable_invalidated_surfaces()
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
+
+    runtime
+        .update_surface(third, |surface| surface.ready().map(|_| ()))
+        .unwrap();
+    assert_eq!(
+        runtime
+            .renderable_invalidated_surfaces()
+            .collect::<Vec<_>>(),
+        vec![first, third]
+    );
+}
+
 fn registry_subscription(observer: SurfaceRef) -> Subscription {
     Subscription::resource(
         ResourceId::new("registry"),

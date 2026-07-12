@@ -2,10 +2,11 @@ use std::collections::{BTreeMap, VecDeque};
 
 use super::{
     AppEffect, AppEffectPayload, AppInput, CoordinationState, Diagnostic, DiagnosticCode,
-    DiagnosticLog, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer, StateVersion,
-    Subscription, SubscriptionChange, SubscriptionError, SubscriptionErrorCode, SubscriptionKey,
-    SurfaceError, SurfaceErrorCode, SurfaceGeneration, SurfaceId, SurfaceLifecycle, SurfaceRef,
-    UiSurface,
+    DiagnosticLog, ElementPhase, InputProvenance, QueueDiagnostic, RedrawTarget, Reducer,
+    StateVersion, Subscription, SubscriptionChange, SubscriptionError, SubscriptionErrorCode,
+    SubscriptionKey, SurfaceElementRef, SurfaceError, SurfaceErrorCode, SurfaceGeneration,
+    SurfaceId, SurfaceLifecycle, SurfaceMutation, SurfacePoint, SurfaceRef, SurfaceRenderAck,
+    SurfaceRenderFrame, SurfaceRenderState, SurfaceRoute, SurfaceSize, UiSurface,
 };
 use crate::ids::CheckedNext;
 
@@ -306,6 +307,105 @@ impl<State, R, Input> Runtime<State, R, Input> {
         self.surfaces.keys().copied()
     }
 
+    /// Validates a targetable element against the current surface registration.
+    ///
+    /// Registry lookup precedes lifecycle, element, and phase checks so stale
+    /// references cannot target a replacement surface.
+    pub fn validate_element(
+        &self,
+        reference: SurfaceElementRef,
+        phase: ElementPhase,
+    ) -> Result<(), SurfaceError> {
+        let surface = self.current_surface(reference.surface())?;
+        ensure_targetable(surface.lifecycle())?;
+        surface.validate_element(reference, phase)
+    }
+
+    /// Validates every route step against its current, targetable surface.
+    ///
+    /// Returns the route target only after all element-phase registrations pass.
+    pub fn validate_route(&self, route: &SurfaceRoute) -> Result<SurfaceElementRef, SurfaceError> {
+        let surface = self.current_surface(route.surface())?;
+        ensure_targetable(surface.lifecycle())?;
+        surface.validate_route(route)
+    }
+
+    /// Updates a renderable surface viewport and records its viewport invalidation.
+    pub fn resize(
+        &mut self,
+        surface: SurfaceRef,
+        viewport: SurfaceSize,
+    ) -> Result<SurfaceMutation, SurfaceError> {
+        self.current_surface_mut(surface)?.set_viewport(viewport)
+    }
+
+    /// Updates one registered surface's scroll offset and records the change.
+    pub fn set_scroll_offset(
+        &mut self,
+        surface: SurfaceRef,
+        offset: SurfacePoint,
+    ) -> Result<SurfaceMutation, SurfaceError> {
+        self.current_surface_mut(surface)?.set_scroll_offset(offset)
+    }
+
+    /// Sets or clears focus for one registered surface.
+    ///
+    /// A non-empty element reference must belong to the current registration;
+    /// clearing focus does not require an element lookup.
+    pub fn set_focus(
+        &mut self,
+        surface: SurfaceRef,
+        element: Option<SurfaceElementRef>,
+    ) -> Result<SurfaceMutation, SurfaceError> {
+        self.current_surface_mut(surface)?.set_focus(element)
+    }
+
+    /// Sets or clears hover for one registered surface.
+    ///
+    /// Hover is independent from focus and validates non-empty references against
+    /// the current registration.
+    pub fn set_hover(
+        &mut self,
+        surface: SurfaceRef,
+        element: Option<SurfaceElementRef>,
+    ) -> Result<SurfaceMutation, SurfaceError> {
+        self.current_surface_mut(surface)?.set_hover(element)
+    }
+
+    /// Borrows the current state with a frame for one renderable surface.
+    ///
+    /// The returned view prevents mutable Runtime operations until it is
+    /// consumed with [`SurfaceRenderState::into_frame`].
+    pub fn begin_render(
+        &self,
+        surface: SurfaceRef,
+    ) -> Result<SurfaceRenderState<'_, State>, SurfaceError> {
+        let frame = self
+            .current_surface(surface)?
+            .begin_render(self.state_version)?;
+        Ok(SurfaceRenderState::new(&self.state, frame))
+    }
+
+    /// Acknowledges the work represented by a Runtime-issued render frame.
+    ///
+    /// The acknowledgement is registry-validated before its local lifecycle and
+    /// monotonic state-version checks can consume invalidations.
+    pub fn mark_rendered(
+        &mut self,
+        frame: SurfaceRenderFrame,
+    ) -> Result<SurfaceRenderAck, SurfaceError> {
+        self.current_surface_mut(frame.surface())?
+            .acknowledge_render(frame)
+    }
+
+    /// Iterates invalidated renderable surfaces in ascending surface-ID order.
+    pub fn renderable_invalidated_surfaces(&self) -> impl Iterator<Item = SurfaceRef> + '_ {
+        self.surfaces.values().filter_map(|surface| {
+            (is_renderable(surface.lifecycle()) && !surface.invalidations().is_empty())
+                .then_some(surface.surface_ref())
+        })
+    }
+
     /// Returns read-only subscription coordination state owned by this runtime.
     #[must_use]
     pub const fn coordination(&self) -> &CoordinationState {
@@ -402,6 +502,22 @@ impl<State, R, Input> Runtime<State, R, Input> {
         Ok(current)
     }
 
+    fn current_surface_mut(&mut self, surface: SurfaceRef) -> Result<&mut UiSurface, SurfaceError> {
+        let Some(current) = self.surfaces.get_mut(&surface.surface_id()) else {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::UnknownSurface,
+                "surface is not registered",
+            ));
+        };
+        if current.generation() != surface.generation() {
+            return Err(SurfaceError::new(
+                SurfaceErrorCode::StaleSurfaceGeneration,
+                "surface reference uses a stale generation",
+            ));
+        }
+        Ok(current)
+    }
+
     fn validate_subscription_observer(
         &self,
         key: &SubscriptionKey,
@@ -443,6 +559,29 @@ const fn is_terminal(lifecycle: SurfaceLifecycle) -> bool {
         lifecycle,
         SurfaceLifecycle::Closing | SurfaceLifecycle::Closed | SurfaceLifecycle::Destroyed
     )
+}
+
+const fn is_renderable(lifecycle: SurfaceLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        SurfaceLifecycle::Ready | SurfaceLifecycle::Resized
+    )
+}
+
+fn ensure_targetable(lifecycle: SurfaceLifecycle) -> Result<(), SurfaceError> {
+    if is_terminal(lifecycle) {
+        return Err(SurfaceError::new(
+            SurfaceErrorCode::TerminalSurface,
+            "surface is terminal",
+        ));
+    }
+    if !is_renderable(lifecycle) {
+        return Err(SurfaceError::new(
+            SurfaceErrorCode::InvalidLifecycleTransition,
+            "surface targeting requires a renderable lifecycle",
+        ));
+    }
+    Ok(())
 }
 
 impl RuntimeLane {

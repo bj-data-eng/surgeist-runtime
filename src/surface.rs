@@ -535,6 +535,10 @@ pub struct SurfaceRenderState<'a, State> {
 }
 
 impl<'a, State> SurfaceRenderState<'a, State> {
+    pub(crate) const fn new(state: &'a State, frame: SurfaceRenderFrame) -> Self {
+        Self { state, frame }
+    }
+
     /// Returns the immutable application state protected by this render view.
     #[must_use]
     pub const fn state(&self) -> &'a State {
@@ -934,13 +938,6 @@ impl UiSurface {
         Ok(())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry validation will delegate routes to this C01 local validator"
-        )
-    )]
     pub(crate) fn validate_route(
         &self,
         route: &SurfaceRoute,
@@ -966,13 +963,6 @@ impl UiSurface {
         Ok(route.target())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry mutation will delegate viewport updates to this C01 local primitive"
-        )
-    )]
     pub(crate) fn set_viewport(
         &mut self,
         viewport: SurfaceSize,
@@ -996,13 +986,6 @@ impl UiSurface {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry mutation will delegate scroll updates to this C01 local primitive"
-        )
-    )]
     pub(crate) fn set_scroll_offset(
         &mut self,
         scroll_offset: SurfacePoint,
@@ -1016,13 +999,6 @@ impl UiSurface {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry mutation will delegate focus updates to this C01 local primitive"
-        )
-    )]
     pub(crate) fn set_focus(
         &mut self,
         focused: Option<SurfaceElementRef>,
@@ -1039,13 +1015,6 @@ impl UiSurface {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry mutation will delegate hover updates to this C01 local primitive"
-        )
-    )]
     pub(crate) fn set_hover(
         &mut self,
         hovered: Option<SurfaceElementRef>,
@@ -1077,13 +1046,6 @@ impl UiSurface {
         self.apply_change(SurfaceInvalidationKind::SnapshotChanged { version }, |_| {})
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry rendering will issue local render frames"
-        )
-    )]
     pub(crate) fn begin_render(
         &self,
         state_version: StateVersion,
@@ -1099,13 +1061,6 @@ impl UiSurface {
         })
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "C03 Runtime registry rendering will accept local render acknowledgements"
-        )
-    )]
     pub(crate) fn acknowledge_render(
         &mut self,
         frame: SurfaceRenderFrame,
