@@ -1,4 +1,4 @@
-use super::{Reducer, Runtime, RuntimeBudget, RuntimeDrainReport};
+use super::{Reducer, Runtime, RuntimeBudget, RuntimeDrainError, RuntimeDrainReport};
 
 pub struct AppLoop<State = (), R = (), Input = ()> {
     runtime: Runtime<State, R, Input>,
@@ -29,7 +29,7 @@ impl<State, R, Input> AppLoop<State, R, Input>
 where
     R: Reducer<State, Input>,
 {
-    pub fn step(&mut self, budget: RuntimeBudget) -> RuntimeDrainReport {
-        self.runtime.drain_once(budget)
+    pub fn step(&mut self, budget: RuntimeBudget) -> Result<RuntimeDrainReport, RuntimeDrainError> {
+        Ok(self.runtime.drain_once(budget))
     }
 }

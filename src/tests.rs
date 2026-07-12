@@ -64,7 +64,7 @@ fn app_loop_has_no_host_handler_or_native_loop() {
     let mut app_loop = AppLoop::new(Runtime::new(CounterState::default(), CounterReducer));
     app_loop.runtime_mut().enqueue_ui(input);
 
-    assert_eq!(app_loop.step(RuntimeBudget::new()), expected);
+    assert_eq!(app_loop.step(RuntimeBudget::new()), Ok(expected));
     assert_eq!(app_loop.into_runtime().state().value, 1);
 }
 

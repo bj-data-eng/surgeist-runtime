@@ -523,6 +523,10 @@ pub struct RuntimeDrainReport {
     task_intents: Vec<AppEffect>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RuntimeDrainError {}
+
 impl RuntimeDrainReport {
     #[must_use]
     pub const fn drained_inputs(&self) -> usize {
